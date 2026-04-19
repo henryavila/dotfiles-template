@@ -1,0 +1,28 @@
+# ~/.ssh/config — template. Rename to `ssh/config` and customize before running install.sh.
+#
+# Common options you'll want to set per-host:
+#   HostName      : IP or DNS (LAN IP, Tailscale hostname, etc.)
+#   User          : login name on the remote
+#   IdentityFile  : path to the private key for this host
+#   ForwardAgent  : yes if you need to chain SSH into another host
+#
+# Tip: keep one alias per network path. Example below shows LAN + Tailscale.
+
+Host mac
+    HostName 192.168.0.10           # <-- LAN IP of your Mac
+    User your-user
+    IdentityFile ~/.ssh/id_ed25519
+    ForwardAgent yes
+
+Host mac-ts
+    HostName my-mac                 # <-- Tailscale MagicDNS name
+    User your-user
+    IdentityFile ~/.ssh/id_ed25519
+    # If you hit KEX hangs on Tailscale, try a lower MTU or switch to LAN alias.
+    # See docs/ssh-tailscale-mtu.md for context.
+
+# Global defaults
+Host *
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+    AddKeysToAgent yes

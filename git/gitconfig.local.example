@@ -1,0 +1,18 @@
+# ~/.gitconfig.local — personal overrides loaded after the opinionated defaults
+# applied by dev-bootstrap / topic 50-git.
+#
+# Put your identity here (so the main gitconfig stays template-friendly):
+
+[user]
+    name  = Your Name
+    email = you@example.com
+    # signingkey = ABCDEF1234567890          # optional: GPG key
+
+# [commit]
+#     gpgsign = true
+#
+# [includeIf "gitdir:~/work/"]
+#     path = ~/.gitconfig.work
+#
+# [url "git@github.com:"]
+#     insteadOf = https://github.com/

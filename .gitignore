@@ -1,0 +1,24 @@
+# Never commit real secrets — .example files are safe (comments only).
+# Uncomment these if you want the template to ship without real configs either:
+#ssh/config
+#git/gitconfig.local
+#shell/bashrc.local
+#shell/zshrc.local
+
+# Keys and certs — always ignore
+*.pem
+*.key
+id_rsa
+id_ed25519
+known_hosts
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# Backups from install.sh
+*.bak-*
