@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # dotfiles-template installer — self-contained, zero external deps.
 #
-# Iterates over every non-".example" file under ssh/, git/, shell/ and deploys
+# Iterates over every non-".example" file listed in MAPPINGS and deploys
 # it to its canonical home location using diff+backup+replace.
 #
 # Usage:
 #   bash install.sh              deploy everything
 #   DRY_RUN=1 bash install.sh    show what would change without writing
 #
-# This script is intentionally independent of dev-bootstrap so that it
-# works from a fresh clone on any machine.
+# Kept intentionally independent of dev-bootstrap so it works from a
+# fresh clone on any machine. Uses indexed arrays (not `declare -A`) so
+# it runs on macOS's default bash 3.2.
 
 set -euo pipefail
 
@@ -20,12 +21,16 @@ log()  { printf '→ %s\n' "$*"; }
 ok()   { printf '✓ %s\n' "$*"; }
 warn() { printf '! %s\n' "$*" >&2; }
 
-# Map <src-relative-to-repo> → <absolute destination>
-declare -A MAP
-MAP["ssh/config"]="$HOME/.ssh/config"
-MAP["git/gitconfig.local"]="$HOME/.gitconfig.local"
-MAP["shell/bashrc.local"]="$HOME/.bashrc.local"
-MAP["shell/zshrc.local"]="$HOME/.zshrc.local"
+# src|dst pairs. A single src may appear multiple times (different destinations).
+MAPPINGS=(
+    "ssh/config|$HOME/.ssh/config"
+    "git/gitconfig.local|$HOME/.gitconfig.local"
+    "shell/bashrc.local|$HOME/.bashrc.local"
+    "shell/zshrc.local|$HOME/.zshrc.local"
+    "shell/inputrc|$HOME/.inputrc"
+    "shell/aliases.sh|$HOME/.bashrc.d/99-personal-aliases.sh"
+    "shell/aliases.sh|$HOME/.zshrc.d/99-personal-aliases.sh"
+)
 
 deploy_one() {
     local src="$1" dst="$2"
@@ -56,18 +61,27 @@ deploy_one() {
     fi
 
     cp "$src_abs" "$dst"
-    # SSH config must be 0600
-    if [[ "$dst" == "$HOME/.ssh/config" ]]; then
-        chmod 0600 "$dst"
-    fi
+
+    # Permissions
+    case "$dst" in
+        "$HOME/.ssh/config")
+            chmod 0600 "$dst"
+            ;;
+        "$HOME"/.bashrc.d/*|"$HOME"/.zshrc.d/*)
+            chmod 0644 "$dst"
+            ;;
+    esac
+
     ok "deployed $dst"
 }
 
 found_any=0
-for src in "${!MAP[@]}"; do
+for pair in "${MAPPINGS[@]}"; do
+    src="${pair%%|*}"
+    dst="${pair#*|}"
     if [[ -f "$HERE/$src" ]]; then
         found_any=1
-        deploy_one "$src" "${MAP[$src]}"
+        deploy_one "$src" "$dst"
     fi
 done
 

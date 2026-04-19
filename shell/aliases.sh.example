@@ -1,0 +1,40 @@
+# shell/aliases.sh — personal aliases loaded into BOTH bash and zsh.
+#
+# Deployed by install.sh to:
+#   ~/.bashrc.d/99-personal-aliases.sh    (sourced by the bashrc loader)
+#   ~/.zshrc.d/99-personal-aliases.sh     (sourced by the zshrc loader)
+#
+# The `99-` prefix ensures these load LAST, after any fragments the
+# dev-bootstrap topics place in the same directories — so your personal
+# aliases win over the defaults.
+#
+# This file is sourced by both shells, so keep to syntax compatible with
+# both (plain `alias` and POSIX-ish functions work; avoid bash-only
+# constructs like [[ ]] if you expect zsh to load it too).
+#
+# Rename to `aliases.sh` (strip .example) and customize.
+
+# ---------- Navigation ----------
+# alias ..='cd ..'
+# alias ...='cd ../..'
+# alias ....='cd ../../..'
+# alias home='cd ~'
+
+# ---------- Common shortcuts ----------
+# alias h='history'
+# alias c='clear'
+# alias e='exit'
+
+# ---------- Git shortcuts (shell-level; complements `git config alias.*`) ----------
+# alias g='git'
+# alias gs='git status'
+# alias gd='git diff'
+# alias gco='git checkout'
+# alias gaa='git add .'
+
+# ---------- Project-specific ----------
+# alias art='php artisan'
+# alias dcu='docker compose up -d'
+
+# ---------- Functions ----------
+# mkd() { mkdir -p "$@" && cd "$@"; }
