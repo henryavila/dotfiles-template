@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 # dotfiles-template installer — self-contained, zero external deps.
 #
-# Iterates over every non-".example" file listed in MAPPINGS and deploys
-# it to its canonical home location using diff+backup+replace.
+# Iterates over MAPPINGS (src|dst[|mode]) and deploys each one:
+#   mode = overwrite (default) — diff, backup-if-different, overwrite.
+#   mode = once                — deploy only if destination is missing.
+#                                Use for files with placeholders that the
+#                                user fills in after first install (tokens,
+#                                secrets) so subsequent runs don't wipe them.
 #
 # Usage:
 #   bash install.sh              deploy everything
 #   DRY_RUN=1 bash install.sh    show what would change without writing
 #
-# Kept intentionally independent of dev-bootstrap so it works from a
-# fresh clone on any machine. Uses indexed arrays (not `declare -A`) so
-# it runs on macOS's default bash 3.2.
+# Intentionally independent of dev-bootstrap. Uses indexed arrays (not
+# `declare -A`) so it works on macOS's default bash 3.2.
 
 set -euo pipefail
 
@@ -21,19 +24,26 @@ log()  { printf '→ %s\n' "$*"; }
 ok()   { printf '✓ %s\n' "$*"; }
 warn() { printf '! %s\n' "$*" >&2; }
 
-# src|dst pairs. A single src may appear multiple times (different destinations).
+# src|dst[|mode]  — mode is "overwrite" (default) or "once".
 MAPPINGS=(
     "ssh/config|$HOME/.ssh/config"
     "git/gitconfig.local|$HOME/.gitconfig.local"
+    "git/gitignore_global|$HOME/.config/git/ignore"
     "shell/bashrc.local|$HOME/.bashrc.local"
     "shell/zshrc.local|$HOME/.zshrc.local"
     "shell/inputrc|$HOME/.inputrc"
     "shell/aliases.sh|$HOME/.bashrc.d/99-personal-aliases.sh"
     "shell/aliases.sh|$HOME/.zshrc.d/99-personal-aliases.sh"
+    "config/htoprc|$HOME/.config/htop/htoprc"
+    "config/s3cfg|$HOME/.s3cfg|once"
+    "npm/npmrc|$HOME/.npmrc|once"
 )
 
+# Track placeholder deploys so we can remind the user at the end.
+needs_edit=()
+
 deploy_one() {
-    local src="$1" dst="$2"
+    local src="$1" dst="$2" mode="${3:-overwrite}"
     local src_abs="$HERE/$src"
 
     if [[ ! -f "$src_abs" ]]; then
@@ -42,13 +52,19 @@ deploy_one() {
 
     mkdir -p "$(dirname "$dst")"
 
+    # "once" mode — do nothing if destination already exists.
+    if [[ "$mode" == "once" ]] && [[ -e "$dst" ]]; then
+        ok "$dst preserved (once mode; edit directly, not in the repo)"
+        return 0
+    fi
+
     if [[ -f "$dst" ]] && cmp -s "$src_abs" "$dst"; then
         ok "$dst up to date"
         return 0
     fi
 
     if [[ "$DRY_RUN" == "1" ]]; then
-        log "would deploy $src → $dst"
+        log "would deploy $src → $dst ($mode)"
         return 0
     fi
 
@@ -67,21 +83,30 @@ deploy_one() {
         "$HOME/.ssh/config")
             chmod 0600 "$dst"
             ;;
+        "$HOME/.s3cfg"|"$HOME/.npmrc")
+            chmod 0600 "$dst"
+            ;;
         "$HOME"/.bashrc.d/*|"$HOME"/.zshrc.d/*)
             chmod 0644 "$dst"
             ;;
     esac
 
     ok "deployed $dst"
+
+    # Flag files that still contain placeholders after deploy
+    if grep -q '<REPLACE-WITH-YOUR-' "$dst" 2>/dev/null; then
+        needs_edit+=("$dst")
+    fi
 }
 
 found_any=0
 for pair in "${MAPPINGS[@]}"; do
-    src="${pair%%|*}"
-    dst="${pair#*|}"
+    # Split src|dst|mode — at most 3 fields.
+    IFS='|' read -r src dst mode <<< "$pair"
+    mode="${mode:-overwrite}"
     if [[ -f "$HERE/$src" ]]; then
         found_any=1
-        deploy_one "$src" "$dst"
+        deploy_one "$src" "$dst" "$mode"
     fi
 done
 
@@ -92,4 +117,16 @@ if [[ "$found_any" -eq 0 ]]; then
     echo "  cp ssh/config.example ssh/config"
     echo "  \$EDITOR ssh/config"
     echo "  bash install.sh"
+    exit 0
+fi
+
+# Final reminder if any deployed file still has placeholders
+if [[ "${#needs_edit[@]}" -gt 0 ]]; then
+    echo
+    warn "the following files were deployed with placeholders — edit them with real values:"
+    for f in "${needs_edit[@]}"; do
+        echo "  $f"
+    done
+    echo
+    echo "These are 'once' files — install.sh will NOT overwrite them on subsequent runs."
 fi

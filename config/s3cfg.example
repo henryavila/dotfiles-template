@@ -1,0 +1,21 @@
+# s3cmd config — rename to `s3cfg` and edit before first install.
+# Deployed to ~/.s3cfg by install.sh, in "once" mode — after the first
+# deploy, install.sh will NOT overwrite subsequent edits (so your real
+# secrets stay safe even if the repo version has placeholders).
+
+[default]
+access_key = <REPLACE-WITH-YOUR-ACCESS-KEY>
+secret_key = <REPLACE-WITH-YOUR-SECRET-KEY>
+access_token =
+gpg_passphrase =
+
+# Provider endpoint — DigitalOcean Spaces example; change as needed.
+# AWS S3:      host_base = s3.amazonaws.com
+# DO Spaces:   host_base = <region>.digitaloceanspaces.com
+host_base = <REGION>.digitaloceanspaces.com
+host_bucket = %(bucket)s.<REGION>.digitaloceanspaces.com
+bucket_location = <REGION>
+
+# Everything else takes s3cmd defaults. Add more keys as you need them.
+use_https = True
+check_ssl_certificate = True

@@ -1,0 +1,15 @@
+# Global gitignore — rename to `gitignore_global`. Deployed to ~/.config/git/ignore.
+# Patterns here apply to every repo on this machine, without needing each repo's .gitignore.
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor scratch files
+*.swp
+*~
+.idea/
+.vscode/
+
+# Tool-local overrides that should never be committed
+# **/.claude/settings.local.json

@@ -1,0 +1,14 @@
+# htop config — rename to `htoprc`. Deployed to ~/.config/htop/htoprc.
+#
+# IMPORTANT: htop REWRITES this file whenever you change settings in its UI.
+# So treating it as version-controlled means "last writer wins" — if you
+# tweak htop on machine A and commit, then tweak on B without pulling,
+# you'll fork. Workflow suggestion: only commit htoprc when you consciously
+# adjust settings you want to propagate.
+#
+# To generate a starting point: configure htop to your liking on any machine
+# and copy ~/.config/htop/htoprc here.
+
+htop_version=3.3.0
+config_reader_min_version=3
+# ... see htop documentation for all available keys ...

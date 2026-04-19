@@ -1,0 +1,9 @@
+# ~/.npmrc — rename to `npmrc` and fill in your auth token before first install.
+# Deployed to ~/.npmrc by install.sh, in "once" mode — your edits persist.
+
+//registry.npmjs.org/:_authToken=<REPLACE-WITH-YOUR-NPM-TOKEN>
+prefix=${HOME}/.npm-global
+
+# Optional extras:
+# engine-strict=true
+# save-exact=true
