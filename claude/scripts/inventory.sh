@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# inventory.sh — snapshot determinístico do estado Claude em uma máquina.
+# inventory.sh — deterministic snapshot of the Claude state on a machine.
 #
-# Uso: bash inventory.sh > ~/claude-inventory-$(hostname).txt
-# Depois, junte os 4 inventários numa máquina só e faça diff pra decidir
-# estratégia de merge (golden master vs union).
+# Usage: bash inventory.sh > ~/claude-inventory-$(hostname).txt
+# Then, collect the inventories on one machine and diff them to choose a
+# merge strategy (golden master vs union).
 #
-# Lê sem modificar nada — safe rodar a qualquer momento.
+# Read-only — safe to run anytime.
 
 set -u
 
@@ -19,15 +19,15 @@ command -v claude >/dev/null 2>&1 && claude --version 2>&1 | head -1 || echo "(c
 echo
 
 echo "=== PLUGINS (via claude CLI) ==="
-claude plugin list 2>&1 || echo "(falhou)"
+claude plugin list 2>&1 || echo "(failed)"
 echo
 
 echo "=== MARKETPLACES ==="
 claude plugin marketplace list 2>/dev/null || ls "$HOME/.claude/plugins/marketplaces/" 2>/dev/null || echo "(none)"
 echo
 
-echo "=== MCPs (todos — plugin e user-scope) ==="
-claude mcp list 2>&1 || echo "(falhou)"
+echo "=== MCPs (all — plugin and user-scope) ==="
+claude mcp list 2>&1 || echo "(failed)"
 echo
 
 echo "=== SKILLS (~/.claude/skills/) ==="

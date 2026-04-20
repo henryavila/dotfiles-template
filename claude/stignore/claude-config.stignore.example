@@ -15,7 +15,7 @@
 /ide/
 
 // ========================================================================
-// DENY: per-machine state + logs + telemetry (ruído, não configuração)
+// DENY: per-machine state + logs + telemetry (noise, not configuration)
 // ========================================================================
 /history.jsonl
 /session-data/

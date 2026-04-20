@@ -1,50 +1,50 @@
-# OAuth MCPs — re-auth manual por máquina
+# OAuth MCPs — manual re-auth per machine
 
-Copia este arquivo para `oauth-mcps.md` (strip .example) e edita com os MCPs que você usa.
+Copy this file to `oauth-mcps.md` (strip `.example`) and edit it with the MCPs you use.
 
-MCPs HTTP com autenticação OAuth **não podem ser sincronizados via Syncthing** — as credenciais são tokens curtos com refresh que expiram + cookies de sessão + verificação de device. Por design do OAuth, é necessário re-autenticar **por máquina, uma vez**.
+HTTP MCPs that authenticate via OAuth **cannot be synced through Syncthing** — the credentials are short-lived refresh tokens + session cookies + device verification. By OAuth design, you have to re-authenticate **per machine, once**.
 
-## Lista dos MCPs OAuth usados por este setup
+## OAuth MCPs used by this setup
 
-<!-- Edite conforme os MCPs que você registra via Claude Code -->
+<!-- Edit to match the MCPs you register via Claude Code -->
 
 | MCP | URL | Login via |
 |-----|-----|-----------|
-| Gmail | `https://gmail.mcp.claude.com/mcp` | conta Google |
-| Google Drive | `https://drivemcp.googleapis.com/mcp/v1` | conta Google |
-| Google Calendar | `https://gcal.mcp.claude.com/mcp` | conta Google |
-| Notion | `https://mcp.notion.com/mcp` | conta Notion |
-| Hugging Face | `https://huggingface.co/mcp?login&gradio=none` | conta HF |
+| Gmail | `https://gmail.mcp.claude.com/mcp` | Google account |
+| Google Drive | `https://drivemcp.googleapis.com/mcp/v1` | Google account |
+| Google Calendar | `https://gcal.mcp.claude.com/mcp` | Google account |
+| Notion | `https://mcp.notion.com/mcp` | Notion account |
+| Hugging Face | `https://huggingface.co/mcp?login&gradio=none` | HF account |
 
-## Fluxo de re-auth em uma máquina nova
+## Re-auth flow on a new machine
 
-1. Abra `claude` em qualquer projeto na máquina nova.
-2. Use qualquer ferramenta que depende de um dos MCPs acima (ex: "ler meu email de hoje" → Gmail). Claude Code vai detectar que o MCP requer auth.
-3. Claude Code imprime uma URL de OAuth. Abra num navegador da MESMA máquina.
-4. Faz login na conta apropriada → redirect pro callback → token salvo localmente.
-5. Repita pra cada um dos MCPs que você quer disponível.
+1. Open `claude` in any project on the new machine.
+2. Use any tool that depends on one of the MCPs above (e.g. "read today's emails" → Gmail). Claude Code detects the MCP needs auth.
+3. Claude Code prints an OAuth URL. Open it in a browser on the SAME machine.
+4. Log in with the right account → redirect to the callback → token saved locally.
+5. Repeat for every MCP you want available.
 
-Tempo estimado: ~5 minutos pra os 5 MCPs listados. Uma vez por máquina.
+Estimated time: ~5 minutes for the 5 MCPs listed. Once per machine.
 
-## Por que não dá pra automatizar?
+## Why can't this be automated?
 
-- Tokens OAuth ficam em `~/.claude/.credentials.json` (600 perms). Teoricamente copiáveis via scp, mas:
-  - Muitos providers (Google, Notion) invalidam o token se device-fingerprint mudar
-  - MFA/2FA pode pedir confirmação interativa mesmo pós-copy
-  - Vazamento ou corrupção do arquivo requer revogar em TODAS as contas
-- Melhor prática: aceitar a fricção única do re-auth manual por máquina. É O(máquinas), não O(sessões).
+- OAuth tokens live in `~/.claude/.credentials.json` (600 perms). Technically `scp`-able, but:
+  - Many providers (Google, Notion) invalidate the token if the device fingerprint changes.
+  - MFA/2FA can ask for interactive confirmation even after copying.
+  - A leak or corrupted file forces revocation across ALL accounts.
+- Best practice: accept the one-off manual re-auth per machine. It's O(machines), not O(sessions).
 
-## Verificar o estado
+## Check the state
 
 ```bash
 claude mcp list | grep -E "claude\.ai"
 ```
 
-Saída esperada após re-auth completo:
+Expected output after full re-auth:
 ```
 claude.ai Gmail: https://... - ✓ Connected
 claude.ai Google Drive: https://... - ✓ Connected
 ...
 ```
 
-Se aparecer `! Needs authentication`, repita o fluxo pra aquele MCP específico.
+If you see `! Needs authentication`, repeat the flow for that specific MCP.

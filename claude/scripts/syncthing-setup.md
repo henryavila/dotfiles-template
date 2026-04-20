@@ -1,61 +1,61 @@
 # Syncthing setup — pairing + folders (`~/.claude/` + `~/.claude-mem/`)
 
-Guia passo-a-passo para configurar sync entre N máquinas pessoais. **Pré-requisito**: Syncthing já instalado e rodando em cada máquina (via topic `80-claude-code` do `dev-bootstrap`). Confira com:
+Step-by-step guide for wiring up sync across N personal machines. **Prerequisite:** Syncthing is already installed and running on each machine (via topic `80-claude-code` in `dev-bootstrap`). Verify with:
 
 ```bash
 systemctl --user is-active syncthing.service   # Linux/WSL
 brew services list | grep syncthing            # Mac
-pgrep -f 'syncthing serve'                     # fallback universal
+pgrep -f 'syncthing serve'                     # universal fallback
 ```
 
 ---
 
-## Modelo mental
+## Mental model
 
-Você vai configurar **2 folders separadas** no Syncthing em cada máquina:
+You'll configure **2 separate folders** in Syncthing on each machine:
 
-| Folder ID | Path | Conteúdo | `.stignore` |
-|-----------|------|----------|-------------|
+| Folder ID | Path | Content | `.stignore` |
+|-----------|------|---------|-------------|
 | `claude-config` | `~/.claude` | skills, agents, commands, rules, hooks, marketplaces, settings.json | `claude/stignore/claude-config.stignore` |
 | `claude-mem` | `~/.claude-mem` | SQLite DB + chroma embeddings | `claude/stignore/claude-mem.stignore` |
 
-A separação em 2 folders dá controle granular: você pode pausar uma (ex: durante merge do claude-mem DB) sem afetar a outra.
+Splitting into two folders gives granular control: you can pause one (e.g. during a claude-mem DB merge) without affecting the other.
 
 ---
 
-## Fase 1 — Setup na "máquina golden" (M1)
+## Phase 1 — Setup on the "golden machine" (M1)
 
-Escolha uma máquina como source-of-truth inicial (geralmente a mais atualizada).
+Pick one machine as the initial source of truth (usually the most up-to-date one).
 
-1. **Abra o Web UI**: http://localhost:8384
+1. **Open the Web UI:** http://localhost:8384
 
-2. **Setar senha** (Settings → GUI):
-   - User Name: `henry` (ou qualquer)
-   - Password: gere no password manager
-   - Use HTTPS: on (opcional)
+2. **Set a password** (Settings → GUI):
+   - User Name: `henry` (or anything)
+   - Password: generate one from your password manager
+   - Use HTTPS: on (optional)
 
-3. **Pegar o Device ID** (Actions → Show ID):
-   - Grave pra usar nas outras máquinas
+3. **Grab the Device ID** (Actions → Show ID):
+   - Save it — you'll use it on the other machines.
 
-4. **Adicionar a folder `claude-config`** (Add Folder):
-   - Folder ID: `claude-config`  ← importante, será usado em todas as máquinas
-   - Folder Path: `/home/<user>/.claude` (ou `/Users/<user>/.claude` no Mac)
-   - Folder Type: **Send Only** ← CRÍTICO nesta fase inicial
-   - Ignore Patterns: **cole o conteúdo de `~/dotfiles/claude/stignore/claude-config.stignore`**
+4. **Add the `claude-config` folder** (Add Folder):
+   - Folder ID: `claude-config`  ← important, used on every machine
+   - Folder Path: `/home/<user>/.claude` (or `/Users/<user>/.claude` on Mac)
+   - Folder Type: **Send Only** ← CRITICAL during this initial phase
+   - Ignore Patterns: **paste the contents of `~/dotfiles/claude/stignore/claude-config.stignore`**
    - Save
 
-5. **Adicionar a folder `claude-mem`**:
+5. **Add the `claude-mem` folder:**
    - Folder ID: `claude-mem`
    - Folder Path: `/home/<user>/.claude-mem`
    - Folder Type: **Send Only**
-   - Ignore Patterns: cole `claude/stignore/claude-mem.stignore`
+   - Ignore Patterns: paste `claude/stignore/claude-mem.stignore`
    - Save
 
 ---
 
-## Fase 2 — Setup em cada máquina receptora (M2, M3, M4)
+## Phase 2 — Setup on each receiving machine (M2, M3, M4)
 
-**⚠️ IMPORTANTE**: antes de parear, **mova o `~/.claude/` e `~/.claude-mem/` atuais** pra um backup local — Syncthing vai sobrescrever com o conteúdo da M1.
+**⚠️ IMPORTANT:** before pairing, **move the existing `~/.claude/` and `~/.claude-mem/`** to a local backup — Syncthing will overwrite them with M1's content.
 
 ```bash
 mv ~/.claude ~/.claude.pre-sync-$(date +%Y%m%d)
@@ -63,94 +63,94 @@ mv ~/.claude-mem ~/.claude-mem.pre-sync-$(date +%Y%m%d)
 mkdir -p ~/.claude ~/.claude-mem
 ```
 
-(Você já tem um backup `.tgz` completo da Fase 0 do playbook; este `mv` é redundante mas barato e dá segurança extra.)
+(You already have a full `.tgz` backup from Phase 0 of the playbook; this `mv` is redundant but cheap extra insurance.)
 
-1. **Abra o Web UI**: http://localhost:8384
+1. **Open the Web UI:** http://localhost:8384
 
-2. **Adicionar o device M1** (Add Remote Device):
-   - Device ID: cole o ID da M1
-   - Name: `m1-hostname` (qualquer label)
-   - Introducer: **off** inicialmente (ative depois que tudo funcionar, simplifica pairing de máquinas futuras)
+2. **Add device M1** (Add Remote Device):
+   - Device ID: paste M1's ID
+   - Name: `m1-hostname` (any label)
+   - Introducer: **off** initially (turn it on once everything works — it simplifies pairing future machines)
    - Save
 
-3. **Aceitar as folders que M1 compartilhou** (aparece como notificação após M1 compartilhar):
+3. **Accept the folders M1 shares** (shows up as a notification after M1 shares):
    - `claude-config` → Folder Type: **Receive Only**; Path: `~/.claude`
    - `claude-mem` → Folder Type: **Receive Only**; Path: `~/.claude-mem`
    - Save
 
-4. **Na M1**, aceitar o share de volta (notificação aparece):
-   - Share `claude-config` com M2 → Save
-   - Share `claude-mem` com M2 → Save
+4. **On M1**, accept the share back (a notification appears):
+   - Share `claude-config` with M2 → Save
+   - Share `claude-mem` with M2 → Save
 
-5. **Aguardar sync completo** — a folder mostra "Up to Date" no status. Leva 5–30min dependendo de tamanho + rede.
+5. **Wait for sync to finish** — the folder shows "Up to Date" in the status. Takes 5–30 min depending on size + network.
 
-Repetir passos 1–5 para M3, M4. Após a primeira máquina, você pode habilitar **Introducer** na M1 — daí M2, M3, M4 se conhecem mutuamente sem você ter que parear todas as combinações.
-
----
-
-## Fase 3 — Flip para bidirectional (após sync completo + validação)
-
-Uma vez que todas as N máquinas mostram "Up to Date" nas 2 folders:
-
-**Em M1** (Web UI → folder → Edit):
-- `claude-config` Folder Type: **Send & Receive** (antes era Send Only)
-- `claude-mem` Folder Type: **Send & Receive**
-
-**Em M2, M3, M4**:
-- `claude-config` Folder Type: **Send & Receive** (antes era Receive Only)
-- `claude-mem` Folder Type: **Send & Receive**
-
-A partir deste momento: qualquer mudança em qualquer máquina propaga pras outras. **Zero intervenção manual no dia-a-dia.**
+Repeat steps 1–5 for M3, M4. Once the first machine is up, you can enable **Introducer** on M1 — then M2, M3, M4 automatically know each other without you having to pair every pair manually.
 
 ---
 
-## Operação diária
+## Phase 3 — Flip to bidirectional (after sync + validation)
 
-Não há. Você instala skill/plugin/mcp em qualquer máquina, Syncthing propaga em segundos-minutos.
+Once every machine shows "Up to Date" across both folders:
 
-**Convenção**: evite operar Claude Code em 2 máquinas *simultaneamente* no mesmo projeto. É improvável mas: se as duas alterarem o mesmo arquivo (ex: skill SKILL.md) ao mesmo tempo, Syncthing gera conflict files (`sync-conflict-<ts>-<device>.md`). Resolver: abrir ambos, manter o melhor, deletar o outro.
+**On M1** (Web UI → folder → Edit):
+- `claude-config` Folder Type: **Send & Receive** (was Send Only)
+- `claude-mem` Folder Type: **Send & Receive**
+
+**On M2, M3, M4:**
+- `claude-config` Folder Type: **Send & Receive** (was Receive Only)
+- `claude-mem` Folder Type: **Send & Receive**
+
+From this point on: any change on any machine propagates to the others. **Zero manual intervention day-to-day.**
+
+---
+
+## Daily operation
+
+There isn't any. Install a skill/plugin/mcp on any machine, Syncthing propagates in seconds-to-minutes.
+
+**Convention:** avoid operating Claude Code on two machines *simultaneously* in the same project. It's unlikely, but if both edit the same file (e.g. a skill's SKILL.md) at the same time, Syncthing generates conflict files (`sync-conflict-<ts>-<device>.md`). Resolution: open both, keep the better one, delete the other.
 
 ---
 
 ## Troubleshooting
 
-### "Folder shows 'Out of Sync' permanentemente"
+### "Folder shows 'Out of Sync' permanently"
 
-Provável conflict file ou permissões ruins. Web UI → folder → mostra lista de arquivos problemáticos. Resolve arquivo-por-arquivo.
+Likely a conflict file or bad permissions. Web UI → folder → lists problematic files. Resolve file by file.
 
-### "Nova máquina não aparece no device list"
+### "New machine doesn't show up in the device list"
 
-- Firewall bloqueando porta 22000 (TCP sync) ou 21027 (UDP discovery)?
-- Rede corporativa pode bloquear Syncthing — tente relay: Settings → Connections → enabled relays.
+- Firewall blocking port 22000 (TCP sync) or 21027 (UDP discovery)?
+- Corporate networks can block Syncthing — try a relay: Settings → Connections → enable relays.
 
-### "DB do claude-mem corrompido após sync"
+### "claude-mem DB corrupt after sync"
 
-WAL/shm sendo sincronizado apesar do `.stignore`? Confere:
+WAL/shm being synced despite `.stignore`? Check:
 ```bash
 ls -la ~/.claude-mem/*.db-*
 ```
-Se aparecer `.db-shm` ou `.db-wal` na pasta, o `.stignore` não está pegando. Verifique:
+If `.db-shm` or `.db-wal` show up in the folder, the `.stignore` isn't matching. Verify:
 ```bash
 cat ~/.claude-mem/.stignore
 ```
 
-### "Muitos arquivos modificados, quero ver o que"
+### "Many modified files, I want to see which ones"
 
-Web UI → folder → "Failed" / "Out of Sync" mostra lista. Também:
+Web UI → folder → "Failed" / "Out of Sync" shows the list. Also:
 ```bash
 syncthing --logflags=0 --verbose
 ```
 
 ---
 
-## Parar temporariamente (ex: durante merge manual)
+## Temporary pause (e.g. during a manual merge)
 
-Web UI → folder → Pause. Reativar depois com Resume.
+Web UI → folder → Pause. Resume afterwards.
 
-CLI alternativa:
+CLI alternative:
 ```bash
 curl -X POST -H "X-API-Key: $(grep api-key ~/.config/syncthing/config.xml | sed 's/.*<apikey>//' | sed 's/<.*//')" \
   http://localhost:8384/rest/db/pause -d 'folder=claude-config'
 ```
 
-(API key está em `~/.config/syncthing/config.xml` — `<apikey>` tag.)
+(API key lives in `~/.config/syncthing/config.xml` — `<apikey>` tag.)

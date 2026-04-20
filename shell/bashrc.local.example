@@ -48,10 +48,15 @@
 #     fi
 # fi
 
-# ---------- Editor — SSH-aware ----------
-# Use a GUI editor locally, CLI editor over SSH.
+# ---------- Editor ----------
+# Simplest: a terminal editor works everywhere (local, SSH, tmux). Uncomment one:
+# export EDITOR="nvim";  export VISUAL="nvim"
+# export EDITOR="vim";   export VISUAL="vim"
+# export EDITOR="nano";  export VISUAL="nano"
+#
+# Or, if you prefer a GUI editor locally and a CLI fallback over SSH:
 # if [ -n "$SSH_CONNECTION" ]; then
-#     export EDITOR="nano"; export VISUAL="nano"
+#     export EDITOR="nano";    export VISUAL="nano"
 # else
 #     export EDITOR="code -w"; export VISUAL="code -w"
 # fi

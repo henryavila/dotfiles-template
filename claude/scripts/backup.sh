@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# backup.sh — tarball dos diretórios Claude em um path timestamped,
-# excluindo state volumoso. Destinado à Fase 0 do playbook de convergência
-# (ver README.md deste diretório).
+# backup.sh — tarball the Claude directories into a timestamped path,
+# excluding bulky state. Meant for Phase 0 of the convergence playbook
+# (see this directory's README.md).
 #
-# Uso: bash backup.sh [dest_dir]
+# Usage: bash backup.sh [dest_dir]
 #   dest_dir default: $HOME
 #
-# Saída: dest_dir/claude-full-backup-<hostname>-<timestamp>.tgz
+# Output: dest_dir/claude-full-backup-<hostname>-<timestamp>.tgz
 
 set -euo pipefail
 
@@ -16,14 +16,14 @@ TS="$(date +%Y%m%d-%H%M%S)"
 OUT="$DEST_DIR/claude-full-backup-${HOST}-${TS}.tgz"
 
 if [ ! -d "$HOME/.claude" ] && [ ! -d "$HOME/.claude-mem" ]; then
-    echo "! Nenhum diretório Claude em $HOME — nada a fazer."
+    echo "! No Claude directory under $HOME — nothing to do."
     exit 0
 fi
 
 echo "→ Creating $OUT"
 
-# Excluir paths grandes / state per-machine / secretos
-# (mas secrets precisam estar no backup pra rollback funcionar — incluir)
+# Exclude bulky paths / per-machine state / secrets… except secrets must be
+# included so a rollback actually restores a working config.
 tar czf "$OUT" \
     -C "$HOME" \
     --exclude='.claude/projects' \
@@ -40,17 +40,17 @@ tar czf "$OUT" \
     --exclude='*.db-wal' \
     .claude .claude-mem 2>/dev/null || true
 
-# Sanidade
+# Sanity check
 if [ ! -f "$OUT" ]; then
-    echo "✗ Backup falhou — arquivo não criado"
+    echo "✗ Backup failed — output file not created"
     exit 1
 fi
 
 size=$(du -sh "$OUT" | cut -f1)
 sha=$(sha256sum "$OUT" | awk '{print $1}')
-echo "✓ Backup criado: $OUT ($size)"
+echo "✓ Backup created: $OUT ($size)"
 echo "  sha256: $sha"
 echo
-echo "Para restaurar:"
-echo "  rm -rf ~/.claude ~/.claude-mem   # cuidado"
+echo "To restore:"
+echo "  rm -rf ~/.claude ~/.claude-mem   # careful"
 echo "  tar xzf $OUT -C \$HOME"

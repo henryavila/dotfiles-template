@@ -1,17 +1,17 @@
 # docs
 
-Aprendizados **universalmente úteis** (qualquer fork se beneficia). Contextualmente específicos (paths, nomes de máquinas, tokens) vão no seu fork privado.
+**Universally useful** learnings (any fork benefits). Contextually specific things (paths, machine names, tokens) belong in your private fork.
 
-## Índice
+## Index
 
-| Doc | Tópico | Quando vai salvar tempo |
-|-----|--------|-------------------------|
-| [`ssh-tailscale-mtu.md`](ssh-tailscale-mtu.md) | SSH trava em KEX via Tailscale | Quando `ssh <host>.ts.net` trava >30s mas `tailscale ping` responde em ms. Fix: reduzir MTU do `tailscale0` pra 1200. O topic `70-remote-access` do dev-bootstrap automatiza esse fix no Linux desde `v2026-04-21`. |
+| Doc | Topic | When it saves time |
+|-----|-------|--------------------|
+| [`ssh-tailscale-mtu.md`](ssh-tailscale-mtu.md) | SSH hangs in KEX over Tailscale | When `ssh <host>.ts.net` stalls >30 s but `tailscale ping` replies in ms. Fix: drop `tailscale0` MTU to 1200. The `70-remote-access` topic in dev-bootstrap automates the fix on Linux since `v2026-04-21`. |
 
-## Quando adicionar um doc aqui (critérios)
+## When to add a doc here (criteria)
 
-- Não é trivialmente Googleable — combina múltiplas tecnologias ou requer diagnóstico por sintoma
-- Tem sintoma reproduzível (outros devs vão encontrar via `grep`)
-- **Universal** — não menciona hostname/path/token específicos de uma pessoa
+- Not trivially Googleable — combines multiple technologies or requires symptom-driven diagnosis.
+- Has a reproducible symptom (other devs will find it via `grep`).
+- **Universal** — doesn't mention a specific person's hostname, path, or token.
 
-Se for específico do seu setup, cria em `~/dotfiles/docs/` no fork (privado), não aqui.
+If it's specific to your setup, add it under `~/dotfiles/docs/` in your (private) fork, not here.
