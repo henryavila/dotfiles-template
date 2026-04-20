@@ -36,6 +36,9 @@ MAPPINGS=(
     "config/htoprc|$HOME/.config/htop/htoprc"
     "config/s3cfg|$HOME/.s3cfg|once"
     "npm/npmrc|$HOME/.npmrc|once"
+    "claude/manifest/mcps-user.sh|$HOME/.claude/manifest/mcps-user.sh"
+    "claude/stignore/claude-config.stignore|$HOME/.claude/.stignore"
+    "claude/stignore/claude-mem.stignore|$HOME/.claude-mem/.stignore"
 )
 
 # Track placeholder deploys so we can remind the user at the end.

@@ -1,0 +1,64 @@
+# Syncthing ignore patterns for ~/.claude/
+#
+# Rename this file to `claude-config.stignore` (strip .example) and deploy
+# via install.sh, which will place it as ~/.claude/.stignore.
+#
+# Semantics: paths are relative to the folder root (~/.claude/).
+# A leading `/` anchors to root. `**` matches zero or more path segments.
+# Lines starting with `//` are comments.
+# See https://docs.syncthing.net/users/ignoring.html for full reference.
+
+// ========================================================================
+// DENY: credentials + OAuth tokens (secrets — NEVER sync)
+// ========================================================================
+/.credentials.json
+/ide/
+
+// ========================================================================
+// DENY: per-machine state + logs + telemetry (ruído, não configuração)
+// ========================================================================
+/history.jsonl
+/session-data/
+/file-history/
+/projects/
+/debug/
+/metrics/
+/cache/
+/backups/
+/shell-snapshots/
+/statsig/
+
+// Plugin runtime caches (regenerable; large)
+/plugins/cache/
+
+// Other agent tools that happen to live under ~/.claude/ (Codex, Cursor, etc.)
+/.agents/
+/.ccg/
+/.codex/
+/.cursor/
+/.opencode/
+/homunculus/
+
+// Editor/OS noise
+*.swp
+*.tmp
+.DS_Store
+Thumbs.db
+
+// ========================================================================
+// ALLOWED (by exclusion — whatever isn't denied above syncs):
+//   /skills/                        custom + plugin-shadow skills
+//   /agents/                        custom agent definitions
+//   /commands/                      custom slash commands
+//   /hooks/                         hooks.json + scripts
+//   /rules/                         auto-loaded rules/*.md
+//   /output-styles/                 (if present)
+//   /plugins/marketplaces/          downloaded marketplace content
+//   /settings.json                  declarative user settings
+//   /marketplace.json               user-added marketplace metadata
+//   /CLAUDE.md, /AGENTS.md          user-global instructions
+//   /PLUGIN_SCHEMA_NOTES.md, /README.md  user docs
+//   /bin/, /ecc/, /guides/          if present, usually content
+//   /mcp-configs/                   static MCP configs
+//   /manifest/                      mcps-user.sh + oauth-mcps.md (from dotfiles)
+// ========================================================================

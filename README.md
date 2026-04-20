@@ -42,6 +42,9 @@ bash install.sh                    # deploy no home
 | `config/htoprc` | `~/.config/htop/htoprc` | overwrite | atenção: htop reescreve este arquivo ao salvar na UI |
 | `config/s3cfg` | `~/.s3cfg` | **once** (chmod 600) | edite direto no home após o primeiro deploy |
 | `npm/npmrc` | `~/.npmrc` | **once** (chmod 600) | idem |
+| `claude/manifest/mcps-user.sh` | `~/.claude/manifest/mcps-user.sh` | overwrite | script idempotente que aplica MCPs user-scope |
+| `claude/stignore/claude-config.stignore` | `~/.claude/.stignore` | overwrite | lista de paths que Syncthing ignora em `~/.claude/` |
+| `claude/stignore/claude-mem.stignore` | `~/.claude-mem/.stignore` | overwrite | idem para `~/.claude-mem/` |
 
 **Não é gerenciado** pelo template (intencionalmente):
 
@@ -49,6 +52,18 @@ bash install.sh                    # deploy no home
 - `~/.bashrc`, `~/.zshrc` — bootstrap/30-shell cuida
 - aliases git (g, gs, gco…) — bootstrap/50-git fragment deploya em `~/.bashrc.d/50-git.sh`
 - `~/.gitconfig` global — bootstrap/50-git seta via `git config --global`
+
+## Claude Sync — cross-machine (desde v2026-04-20)
+
+A pasta `claude/` versiona o setup para manter N máquinas pessoais com o mesmo stack Claude Code (plugins, skills, MCPs, rules, memórias). Modelo:
+
+- **Sync contínuo** via Syncthing P2P com `.stignore` curado (`stignore/claude-config.stignore`, `stignore/claude-mem.stignore`).
+- **Reprodutibilidade cold-start** via manifest declarativo (`manifest/mcps-user.sh`) + bootstrap.
+- **Convergência inicial** de máquinas já divergentes via scripts em `claude/scripts/` (inventory, backup, merge-claude-mem).
+
+Leia `claude/README.md` para o fluxo completo e `claude/scripts/syncthing-setup.md` para pairing + folders.
+
+O `dev-bootstrap` (topic `80-claude-code`) instala Claude CLI **+ Syncthing daemon** desde a tag `v2026-04-20`. O conteúdo do `claude/` aqui é o que decide **o quê** sincronizar e **como**.
 
 ## Integração com dev-bootstrap
 

@@ -1,0 +1,50 @@
+# OAuth MCPs — re-auth manual por máquina
+
+Copia este arquivo para `oauth-mcps.md` (strip .example) e edita com os MCPs que você usa.
+
+MCPs HTTP com autenticação OAuth **não podem ser sincronizados via Syncthing** — as credenciais são tokens curtos com refresh que expiram + cookies de sessão + verificação de device. Por design do OAuth, é necessário re-autenticar **por máquina, uma vez**.
+
+## Lista dos MCPs OAuth usados por este setup
+
+<!-- Edite conforme os MCPs que você registra via Claude Code -->
+
+| MCP | URL | Login via |
+|-----|-----|-----------|
+| Gmail | `https://gmail.mcp.claude.com/mcp` | conta Google |
+| Google Drive | `https://drivemcp.googleapis.com/mcp/v1` | conta Google |
+| Google Calendar | `https://gcal.mcp.claude.com/mcp` | conta Google |
+| Notion | `https://mcp.notion.com/mcp` | conta Notion |
+| Hugging Face | `https://huggingface.co/mcp?login&gradio=none` | conta HF |
+
+## Fluxo de re-auth em uma máquina nova
+
+1. Abra `claude` em qualquer projeto na máquina nova.
+2. Use qualquer ferramenta que depende de um dos MCPs acima (ex: "ler meu email de hoje" → Gmail). Claude Code vai detectar que o MCP requer auth.
+3. Claude Code imprime uma URL de OAuth. Abra num navegador da MESMA máquina.
+4. Faz login na conta apropriada → redirect pro callback → token salvo localmente.
+5. Repita pra cada um dos MCPs que você quer disponível.
+
+Tempo estimado: ~5 minutos pra os 5 MCPs listados. Uma vez por máquina.
+
+## Por que não dá pra automatizar?
+
+- Tokens OAuth ficam em `~/.claude/.credentials.json` (600 perms). Teoricamente copiáveis via scp, mas:
+  - Muitos providers (Google, Notion) invalidam o token se device-fingerprint mudar
+  - MFA/2FA pode pedir confirmação interativa mesmo pós-copy
+  - Vazamento ou corrupção do arquivo requer revogar em TODAS as contas
+- Melhor prática: aceitar a fricção única do re-auth manual por máquina. É O(máquinas), não O(sessões).
+
+## Verificar o estado
+
+```bash
+claude mcp list | grep -E "claude\.ai"
+```
+
+Saída esperada após re-auth completo:
+```
+claude.ai Gmail: https://... - ✓ Connected
+claude.ai Google Drive: https://... - ✓ Connected
+...
+```
+
+Se aparecer `! Needs authentication`, repita o fluxo pra aquele MCP específico.

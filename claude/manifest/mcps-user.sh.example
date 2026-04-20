@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# mcps-user.sh — register user-scope MCP servers.
+#
+# Rename this file to `mcps-user.sh` (strip .example) and edit.
+# Deployed by install.sh to ~/.claude/manifest/mcps-user.sh, then
+# run manually (or wired via the last step of install.sh) to apply.
+#
+# Rationale: `claude plugin install` takes care of plugin-provided MCPs
+# automatically (they propagate via Syncthing once plugins sync). This
+# script only covers USER-SCOPE MCPs — those added with `claude mcp add -s user`
+# that live in ~/.claude.json (not in any plugin).
+#
+# Since ~/.claude.json is NOT sync'd (it's mostly telemetry + per-machine
+# state), we re-apply these declaratively on each machine.
+#
+# `claude mcp add` is IDEMPOTENT for repeated identical invocations — safe
+# to re-run anytime.
+
+set -euo pipefail
+
+if ! command -v claude >/dev/null 2>&1; then
+    echo "! claude CLI not on PATH — skipping mcps-user.sh"
+    exit 0
+fi
+
+# ----- context7 (library docs lookup) -----
+claude mcp add context7 -s user -- npx -y @upstash/context7-mcp@latest
+
+# ----- exemplos — descomente o que você usa -----
+
+# claude mcp add memory -s user -- npx -y @modelcontextprotocol/server-memory
+# claude mcp add sequential-thinking -s user -- npx -y @modelcontextprotocol/server-sequential-thinking
+
+# ----- HTTP MCPs com OAuth (Gmail, Drive, etc.) -----
+# NÃO entram aqui — re-auth manual é obrigatório (via web browser).
+# Veja oauth-mcps.md no mesmo diretório.
+
+echo "✓ user-scope MCPs registered (claude mcp add is idempotent)"

@@ -1,0 +1,29 @@
+# Syncthing ignore patterns for ~/.claude-mem/
+#
+# Rename to `claude-mem.stignore` (strip .example) and deploy via install.sh
+# (lands at ~/.claude-mem/.stignore).
+#
+# Semantics: see claude-config.stignore.example. Paths relative to folder root.
+
+// ========================================================================
+// DENY: SQLite transient files
+// ========================================================================
+// WAL / shared-memory files change constantly while DB is open.
+// Syncthing replicating them mid-flight causes consistency issues.
+// The DB file itself (.db) is safe to sync when no writer is active.
+*.db-shm
+*.db-wal
+*.db-journal
+
+// ========================================================================
+// DENY: rotating logs (per-machine, not useful cross-machine)
+// ========================================================================
+/logs/
+
+// ========================================================================
+// ALLOWED (syncs):
+//   /claude-mem.db         main SQLite (observations, sessions, prompts)
+//   /chroma/               ChromaDB embeddings (vector index)
+//   /settings.json         claude-mem config (stable)
+//   /observer-sessions/    sessions em andamento (small)
+// ========================================================================
