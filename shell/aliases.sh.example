@@ -4,37 +4,102 @@
 #   ~/.bashrc.d/99-personal-aliases.sh    (sourced by the bashrc loader)
 #   ~/.zshrc.d/99-personal-aliases.sh     (sourced by the zshrc loader)
 #
-# The `99-` prefix ensures these load LAST, after any fragments the
-# dev-bootstrap topics place in the same directories — so your personal
-# aliases win over the defaults.
+# The `99-` prefix ensures these load LAST, after fragments from the dev-bootstrap
+# topics (10-languages, 20-terminal-ux, 50-git, ...). That means your personal
+# aliases WIN over the defaults — useful to override an alias from 50-git, for
+# example. But you should avoid duplicating what's already provided.
 #
-# This file is sourced by both shells, so keep to syntax compatible with
-# both (plain `alias` and POSIX-ish functions work; avoid bash-only
-# constructs like [[ ]] if you expect zsh to load it too).
+# Already provided by dev-bootstrap (do NOT re-add here unless you want to
+# override):
+#   20-terminal-ux → ls/ll/la/tree (eza), cat (bat), fd
+#   50-git         → g/gs/gl/gd/gco/gb/gp/gaa/gc/grb/gsh/glog/gloga/whoops/gmm
+#                    + __git_complete for g/gco/gb/gp/gd (bash only)
 #
 # Rename to `aliases.sh` (strip .example) and customize.
 
 # ---------- Navigation ----------
-# alias ..='cd ..'
-# alias ...='cd ../..'
-# alias ....='cd ../../..'
-# alias home='cd ~'
+alias ..='cd ..'
+alias ...='cd ../..'
+alias ....='cd ../../..'
+alias home='cd ~'
 
-# ---------- Common shortcuts ----------
-# alias h='history'
-# alias c='clear'
-# alias e='exit'
+# ---------- Shell shortcuts ----------
+alias h='history'
+alias c='clear'
+alias cla='clear && ls -la'
 
-# ---------- Git shortcuts (shell-level; complements `git config alias.*`) ----------
-# alias g='git'
-# alias gs='git status'
-# alias gd='git diff'
-# alias gco='git checkout'
-# alias gaa='git add .'
+# ---------- grep colored (idempotent — most distros already set this) ----------
+alias grep='grep --color=auto'
+alias fgrep='fgrep --color=auto'
+alias egrep='egrep --color=auto'
 
-# ---------- Project-specific ----------
+# ---------- eza with icons (overrides the simpler 20-terminal-ux defaults) ----------
+# Uncomment if you want a Nerd-Font-styled ls. Requires a Nerd Font in the terminal.
+# if command -v eza >/dev/null 2>&1; then
+#     alias ls='eza --icons --group-directories-first'
+#     alias ll='eza -la --icons --group-directories-first --git'
+#     alias la='eza -a --icons --group-directories-first'
+#     alias lt='eza --tree --icons --level=2'
+# fi
+
+# ---------- bat with auto style (override of 20-terminal-ux's plain style) ----------
+# if command -v bat >/dev/null 2>&1; then
+#     alias cat='bat --style=auto'
+# elif command -v batcat >/dev/null 2>&1; then
+#     alias bat='batcat'
+#     alias cat='batcat --style=auto'
+# fi
+
+# ---------- Laravel / PHP — opt-in (only if you develop in Laravel) ----------
 # alias art='php artisan'
-# alias dcu='docker compose up -d'
+# alias cinst='composer install'
+# alias cup='composer update'
+# alias cdump='composer dump-autoload -o'
+# alias fresh='php artisan migrate:fresh'
+# alias migrate='php artisan migrate'
+# alias phpunit='./vendor/bin/phpunit'
+# alias pu='./vendor/bin/phpunit'
+# alias puf='./vendor/bin/phpunit --filter'
+
+# ---------- Service restart (WSL / Linux running Laravel stack) ----------
+# if command -v php >/dev/null 2>&1; then
+#     _PHP_VERSION=$(php -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;' 2>/dev/null || true)
+# fi
+# alias srn='sudo service nginx restart'
+# alias ssn='sudo service nginx status'
+# [ -n "${_PHP_VERSION:-}" ] && alias srp="sudo service php${_PHP_VERSION}-fpm restart"
+# alias srr='sudo service redis restart'
+
+# ---------- tmux ----------
+# alias tl='tmux ls'
+# alias ta='tmux attach -t'
+# alias tn='tmux new -s'
+
+# ---------- Tailscale ----------
+# alias ts='tailscale status'
+# alias tip='tailscale ip -4'
+
+# ---------- Claude Code ----------
+# alias cc='claude --dangerously-skip-permissions'
+# alias ccc='claude --dangerously-skip-permissions --continue'
+# alias ccr='claude --dangerously-skip-permissions --resume'
+
+# ---------- Notify helper (usage: `make build; alert`) ----------
+# alias alert='notify-send --urgency=low -i "$([ $? = 0 ] && echo terminal || echo error)" "$(history|tail -n1|sed -e '\''s/^\s*[0-9]\+\s*//;s/[;&|]\s*alert$//'\'')"'
 
 # ---------- Functions ----------
-# mkd() { mkdir -p "$@" && cd "$@"; }
+
+# mkdir + cd
+# mkd() { mkdir -p "$@" && cd "$@" || return; }
+
+# Total size of files / dir contents
+# fs() {
+#     local arg
+#     if du -b /dev/null > /dev/null 2>&1; then arg=-sbh; else arg=-sh; fi
+#     if [ -n "$*" ]; then du "$arg" -- "$@"; else du "$arg" .[^.]* ./*; fi
+# }
+
+# tree with hidden files, ignoring .git/node_modules, paged via less
+# tre() {
+#     tree -aC -I '.git|node_modules|bower_components|.venv|vendor' --dirsfirst "$@" | less -FRNX
+# }

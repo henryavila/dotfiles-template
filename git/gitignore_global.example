@@ -12,4 +12,10 @@ Thumbs.db
 .vscode/
 
 # Tool-local overrides that should never be committed
+# Uncomment if you use Claude Code with autoMemoryDirectory (or any tool that
+# writes per-project settings.local.json with secrets or user-specific paths).
 # **/.claude/settings.local.json
+
+# Build output caches (usually in each repo's .gitignore already, but harmless here)
+# .cache/
+# .env.local

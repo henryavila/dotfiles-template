@@ -1,21 +1,59 @@
 # s3cmd config — rename to `s3cfg` and edit before first install.
-# Deployed to ~/.s3cfg by install.sh, in "once" mode — after the first
-# deploy, install.sh will NOT overwrite subsequent edits (so your real
-# secrets stay safe even if the repo version has placeholders).
+# Deployed to ~/.s3cfg by install.sh in "once" mode — after the first deploy,
+# install.sh will NOT overwrite subsequent edits (so your real secrets stay
+# safe even if the repo version has placeholders).
+#
+# Provider examples:
+#   AWS S3           host_base = s3.amazonaws.com
+#                    host_bucket = %(bucket)s.s3.amazonaws.com
+#   DigitalOcean     host_base = <region>.digitaloceanspaces.com
+#                    host_bucket = %(bucket)s.<region>.digitaloceanspaces.com
+#                    bucket_location = <region>     # e.g. nyc3, sfo3, ams3
+#   Cloudflare R2    host_base = <account>.r2.cloudflarestorage.com
+#                    host_bucket = %(bucket)s.<account>.r2.cloudflarestorage.com
+#   Backblaze B2     host_base = s3.<region>.backblazeb2.com
+#                    host_bucket = %(bucket)s.s3.<region>.backblazeb2.com
 
 [default]
 access_key = <REPLACE-WITH-YOUR-ACCESS-KEY>
 secret_key = <REPLACE-WITH-YOUR-SECRET-KEY>
 access_token =
-gpg_passphrase =
+gpg_passphrase = <REPLACE-WITH-YOUR-GPG-PASSPHRASE>
 
-# Provider endpoint — DigitalOcean Spaces example; change as needed.
-# AWS S3:      host_base = s3.amazonaws.com
-# DO Spaces:   host_base = <region>.digitaloceanspaces.com
+# Provider endpoint — change to your provider above
 host_base = <REGION>.digitaloceanspaces.com
 host_bucket = %(bucket)s.<REGION>.digitaloceanspaces.com
 bucket_location = <REGION>
 
-# Everything else takes s3cmd defaults. Add more keys as you need them.
+# HTTPS + cert checks (keep True unless you know why you're disabling)
 use_https = True
 check_ssl_certificate = True
+check_ssl_hostname = True
+
+# Multipart uploads for large files
+enable_multipart = True
+multipart_chunk_size_mb = 15
+multipart_copy_chunk_size_mb = 1024
+multipart_max_chunks = 10000
+
+# Network
+connection_max_age = 5
+connection_pooling = True
+socket_timeout = 300
+max_retries = 5
+
+# Encoding / MIME
+encoding = UTF-8
+default_mime_type = binary/octet-stream
+guess_mime_type = True
+use_mime_magic = True
+
+# GPG (for s3cmd's server-side encryption via symmetric key)
+gpg_command = /usr/bin/gpg
+
+# Misc defaults — leave alone unless you need tuning
+progress_meter = True
+preserve_attrs = True
+signature_v2 = False
+urlencoding_mode = normal
+verbosity = WARNING

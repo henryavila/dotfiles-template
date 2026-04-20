@@ -31,7 +31,6 @@ MAPPINGS=(
     "git/gitignore_global|$HOME/.config/git/ignore"
     "shell/bashrc.local|$HOME/.bashrc.local"
     "shell/zshrc.local|$HOME/.zshrc.local"
-    "shell/inputrc|$HOME/.inputrc"
     "shell/aliases.sh|$HOME/.bashrc.d/99-personal-aliases.sh"
     "shell/aliases.sh|$HOME/.zshrc.d/99-personal-aliases.sh"
     "config/htoprc|$HOME/.config/htop/htoprc"

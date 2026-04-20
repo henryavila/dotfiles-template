@@ -1,18 +1,52 @@
 # ~/.gitconfig.local — personal overrides loaded after the opinionated defaults
 # applied by dev-bootstrap / topic 50-git.
 #
-# Put your identity here (so the main gitconfig stays template-friendly):
+# The bootstrap sets sensible defaults globally via `git config --global`:
+#   init.defaultBranch=main, core.pager=delta, merge.conflictstyle=zdiff3,
+#   push.autoSetupRemote=true, fetch.prune=true, rebase.autoStash=true,
+#   delta.syntax-theme=Catppuccin-Mocha, etc.
+#
+# Anything here OVERRIDES those (via `[include] path = ~/.gitconfig.local`).
+# Put your identity here so the main gitconfig stays template-friendly.
 
 [user]
     name  = Your Name
     email = you@example.com
-    # signingkey = ABCDEF1234567890          # optional: GPG key
+    # signingkey = ABCDEF1234567890          # GPG key if you sign commits
 
 # [commit]
 #     gpgsign = true
-#
+
+# Line-ending strategy on Windows / WSL cross-platform repos
+# [core]
+#     autocrlf = input
+
+# Override the bootstrap's zdiff3 with the classic diff3 format
+# [merge]
+#     conflictstyle = diff3
+
+# Prefer side-by-side diffs, or flip the delta theme to a darker variant
+# [delta]
+#     dark = true
+#     # side-by-side = true
+
+# Show moved blocks in a distinct color
+# [diff]
+#     colorMoved = default
+
+# Auth GitHub over HTTPS via the `gh` CLI credential helper (if `gh` is installed)
+# [credential "https://github.com"]
+#     helper =
+#     helper = !gh auth git-credential
+# [credential "https://gist.github.com"]
+#     helper =
+#     helper = !gh auth git-credential
+
+# Include extra config per directory (e.g. work identity under ~/work/)
 # [includeIf "gitdir:~/work/"]
 #     path = ~/.gitconfig.work
-#
+
+# Rewrite HTTPS → SSH automatically (useful if you clone public repos via https
+# but want to push via ssh; requires SSH keys on GitHub)
 # [url "git@github.com:"]
 #     insteadOf = https://github.com/
