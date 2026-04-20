@@ -1,148 +1,158 @@
 # dotfiles-template
 
-Skeleton para dotfiles pessoais de qualquer dev. Clique **"Use this template"** no GitHub para criar seu próprio repo (recomendado: privado).
+Skeleton para dotfiles pessoais de qualquer dev. Clique **"Use this template"** no GitHub para criar seu repo (recomendado: privado).
 
-## Conceito: template é a camada de overrides, não o baseline
+## Papel desta camada
 
-Este template **não tenta ser um dotfiles completo**. A maior parte da configuração (bashrc, zshrc, inputrc, prompt, fzf, zoxide, aliases git, git defaults) vem do [`dev-bootstrap`](https://github.com/henryavila/dev-bootstrap), que roda antes e instala o stack + fragments em `~/.bashrc.d/` / `~/.zshrc.d/` / `~/.gitconfig`.
+Um dos três repos de um stack em camadas:
 
-O seu fork deste template só precisa versionar:
+```
+┌──────────────────────────────────────────────────────────────┐
+│  dev-bootstrap      →  ferramentas + configs universais       │
+│                         (bashrc, inputrc, gitconfig global,   │
+│                         fragments ~/.bashrc.d/, Syncthing…)   │
+├──────────────────────────────────────────────────────────────┤
+│  dotfiles-template  →  ESTE REPO — scaffold + install.sh      │
+│                         (.example files + lógica de deploy)   │
+├──────────────────────────────────────────────────────────────┤
+│  <you>/dotfiles     →  seu fork privado: identidade + overrides │
+│                         (SSH, gitconfig.local, aliases, tokens) │
+└──────────────────────────────────────────────────────────────┘
+```
 
-1. **Dados pessoais que variam por pessoa** — ssh hosts, identidade git, tokens
-2. **Overrides** sobre o baseline do bootstrap — por exemplo, `[merge] conflictstyle=diff3` se você prefere ao `zdiff3` que o bootstrap aplica
-3. **Preferências que o bootstrap não tem opinião** — ble.sh, Typora como editor, eza com icons
+**Regra mental**: baseline que todo dev recebe vai no `dev-bootstrap`. O que varia por pessoa ou é preferência sua vai no fork deste template.
 
-Se você se pegar duplicando algo que o bootstrap já deploya, delete do seu fork — o bootstrap vence no baseline, seu fork vence nas overrides pelo prefixo `99-` (ver §Precedência no fim).
+## Setup inicial (fork novo)
+
+1. **"Use this template"** no GitHub → escolha "Private" → nome `dotfiles`.
+2. Clone e customize:
+
+   ```bash
+   git clone git@github.com:SEU_USER/dotfiles.git ~/dotfiles
+   cd ~/dotfiles
+
+   # Renomeie .example → nome plain e edite o que quer adotar:
+   cp ssh/config.example ssh/config                       # hostnames, IdentityFile
+   cp git/gitconfig.local.example git/gitconfig.local     # nome + email
+   cp shell/bashrc.local.example shell/bashrc.local       # (opcional)
+   cp shell/aliases.sh.example shell/aliases.sh           # (opcional)
+   cp claude/manifest/mcps-user.sh.example claude/manifest/mcps-user.sh  # MCPs user-scope
+
+   bash install.sh
+   ```
+
+3. Commits normais: `git add`, `git commit`, `git push`. Privado obrigatório se contém hostnames internos, emails, tokens.
 
 ## Como funciona
 
-Cada arquivo em `ssh/`, `git/`, `shell/`, `config/`, `npm/` com sufixo `.example` é um placeholder. Para adotar uma config:
+`install.sh` é self-contained (zero dependência do dev-bootstrap). Para cada entrada em `MAPPINGS`, processa arquivos **sem** sufixo `.example`:
+
+- **modo `overwrite`** (default): diff contra o destino, backup timestamped se mudou, copia.
+- **modo `once`** (marcado no `MAPPINGS`): deploya só se destino não existe. Para arquivos com placeholders de secrets — depois do 1º install você edita `~/.s3cfg` / `~/.npmrc` direto com valores reais e o script preserva.
 
 ```bash
-cp ssh/config.example ssh/config
-$EDITOR ssh/config                 # customize
-bash install.sh                    # deploy no home
+DRY_RUN=1 bash install.sh   # plano sem executar
+bash install.sh             # aplicar
 ```
 
-`install.sh` é self-contained (sem dependências do bootstrap). Para cada arquivo não-`.example`: calcula o destino, faz diff, cria backup timestamped se mudou, e copia. Suporta dois modos:
+## O que este template deploya
 
-- **overwrite** (default): arquivo no repo é a fonte da verdade. Diff + backup + copia.
-- **once**: deploya só se destino não existe. Use para arquivos com placeholders de secrets — depois do primeiro install, você edita `~/.s3cfg` / `~/.npmrc` diretamente com seus tokens reais e `install.sh` nunca mais sobrescreve.
+| src no repo | destino | modo |
+|-------------|---------|------|
+| `ssh/config` | `~/.ssh/config` (chmod 600) | overwrite |
+| `git/gitconfig.local` | `~/.gitconfig.local` (puxado via `include.path` que o `dev-bootstrap/50-git` seta em `~/.gitconfig`) | overwrite |
+| `git/gitignore_global` | `~/.config/git/ignore` | overwrite |
+| `shell/bashrc.local` | `~/.bashrc.local` (carregado **por último** pelo `~/.bashrc` do bootstrap) | overwrite |
+| `shell/zshrc.local` | `~/.zshrc.local` | overwrite |
+| `shell/aliases.sh` | `~/.bashrc.d/99-personal-aliases.sh` **e** `~/.zshrc.d/99-personal-aliases.sh` (prefixo `99-` força carregar depois dos fragments do bootstrap) | overwrite |
+| `config/htoprc` | `~/.config/htop/htoprc` (atenção: htop reescreve este arquivo ao mudar settings na UI) | overwrite |
+| `config/s3cfg` | `~/.s3cfg` (chmod 600) | **once** |
+| `npm/npmrc` | `~/.npmrc` (chmod 600) | **once** |
+| `claude/manifest/mcps-user.sh` | `~/.claude/manifest/mcps-user.sh` | overwrite |
+| `claude/stignore/claude-config.stignore` | `~/.claude/.stignore` (controla Syncthing em `~/.claude/`) | overwrite |
+| `claude/stignore/claude-mem.stignore` | `~/.claude-mem/.stignore` | overwrite |
 
-## O que é gerenciado
+### O que o template NÃO gerencia (vem do `dev-bootstrap`)
 
-| src no repo | destino | modo | observações |
-|-------------|---------|------|-------------|
-| `ssh/config` | `~/.ssh/config` | overwrite (chmod 600) | hosts, IdentityFile |
-| `git/gitconfig.local` | `~/.gitconfig.local` | overwrite | identidade + overrides — referenciado por `include.path` que o bootstrap 50-git seta em `~/.gitconfig` |
-| `git/gitignore_global` | `~/.config/git/ignore` | overwrite | patterns ignorados em todo repo |
-| `shell/bashrc.local` | `~/.bashrc.local` | overwrite | carregado **por último** pelo `~/.bashrc` do bootstrap |
-| `shell/zshrc.local` | `~/.zshrc.local` | overwrite | idem para zsh |
-| `shell/aliases.sh` | `~/.bashrc.d/99-personal-aliases.sh` e `~/.zshrc.d/99-personal-aliases.sh` | overwrite | prefixo `99-` garante que carrega depois dos fragments do bootstrap e sobrescreve se necessário |
-| `config/htoprc` | `~/.config/htop/htoprc` | overwrite | atenção: htop reescreve este arquivo ao salvar na UI |
-| `config/s3cfg` | `~/.s3cfg` | **once** (chmod 600) | edite direto no home após o primeiro deploy |
-| `npm/npmrc` | `~/.npmrc` | **once** (chmod 600) | idem |
-| `claude/manifest/mcps-user.sh` | `~/.claude/manifest/mcps-user.sh` | overwrite | script idempotente que aplica MCPs user-scope |
-| `claude/stignore/claude-config.stignore` | `~/.claude/.stignore` | overwrite | lista de paths que Syncthing ignora em `~/.claude/` |
-| `claude/stignore/claude-mem.stignore` | `~/.claude-mem/.stignore` | overwrite | idem para `~/.claude-mem/` |
+- `~/.inputrc` — bootstrap/30-shell (word-kill, completion niceties)
+- `~/.bashrc`, `~/.zshrc` — loaders do bootstrap/30-shell
+- Aliases git de shell (`g`, `gs`, `gco`, `whoops`, `gmm`…) — bootstrap/50-git fragment
+- `~/.gitconfig` global — bootstrap/50-git via `git config --global`
+- `~/.config/starship.toml`, `~/.tmux.conf` — bootstrap/20-terminal-ux, 40-tmux
 
-**Não é gerenciado** pelo template (intencionalmente):
+Se você se pegar re-declarando algo disso, pare. O bootstrap já cobre; seu fork só precisa **identidade + overrides**.
 
-- `~/.inputrc` — bootstrap/30-shell cuida disso
-- `~/.bashrc`, `~/.zshrc` — bootstrap/30-shell cuida
-- aliases git (g, gs, gco…) — bootstrap/50-git fragment deploya em `~/.bashrc.d/50-git.sh`
-- `~/.gitconfig` global — bootstrap/50-git seta via `git config --global`
+## Claude Sync (desde v2026-04-20)
 
-## Claude Sync — cross-machine (desde v2026-04-20)
+A pasta `claude/` introduz sync cross-machine da config Claude Code usando **Syncthing P2P** (daemon instalado pelo `dev-bootstrap/80-claude-code`).
 
-A pasta `claude/` versiona o setup para manter N máquinas pessoais com o mesmo stack Claude Code (plugins, skills, MCPs, rules, memórias). Modelo:
+Modelo 2-problemas-2-ferramentas:
 
-- **Sync contínuo** via Syncthing P2P com `.stignore` curado (`stignore/claude-config.stignore`, `stignore/claude-mem.stignore`).
-- **Reprodutibilidade cold-start** via manifest declarativo (`manifest/mcps-user.sh`) + bootstrap.
-- **Convergência inicial** de máquinas já divergentes via scripts em `claude/scripts/` (inventory, backup, merge-claude-mem).
+| Problema | Solução |
+|----------|---------|
+| **Sync contínuo** entre N máquinas pessoais já configuradas | Syncthing com `.stignore` curado nas pastas `~/.claude/` e `~/.claude-mem/`. Descoberta de skill em qualquer máquina propaga automaticamente. |
+| **Reprodutibilidade cold-start** (máquina zero) | `manifest/mcps-user.sh` — script idempotente que reaplica MCPs user-scope (plugins vêm via Syncthing quando pareado). |
+| **Convergência inicial** (4 máquinas já divergentes) | Scripts em `claude/scripts/` — `inventory.sh`, `backup.sh`, `merge-claude-mem.py` (preserva memória via `content_hash` dedup). Playbook 6 fases em `claude/README.md`. |
 
-Leia `claude/README.md` para o fluxo completo e `claude/scripts/syncthing-setup.md` para pairing + folders.
+Leia `claude/README.md` pros detalhes completos e `claude/scripts/syncthing-setup.md` pro fluxo de pairing.
 
-O `dev-bootstrap` (topic `80-claude-code`) instala Claude CLI **+ Syncthing daemon** desde a tag `v2026-04-20`. O conteúdo do `claude/` aqui é o que decide **o quê** sincronizar e **como**.
+## Adicionando um novo arquivo ao seu fork
 
-## Integração com dev-bootstrap
+1. Cria `<area>/<nome>.example` com conteúdo comentado explicando cada campo.
+2. Renomeia `.example` → plain e customiza.
+3. Adiciona linha no array `MAPPINGS` em `install.sh`.
+4. Adiciona linha na tabela do README do seu fork.
+5. `DRY_RUN=1 bash install.sh` → `bash install.sh`.
+6. Commit com mensagem explicando **por quê**.
 
-```bash
-# Num ambiente recém-bootstrapped:
-DOTFILES_REPO=git@github.com:SEU_USER/dotfiles.git bash ~/dev-bootstrap/bootstrap.sh
-```
+## Precedência de carregamento no shell
 
-O topic `95-dotfiles-personal` clona seu repo em `~/dotfiles` e roda `install.sh`.
+Quando abre um shell interativo:
 
-## Adicionando um novo arquivo
+1. `~/.bashrc` (bootstrap/30-shell) — loader minimal
+2. `~/.bashrc.d/NN-<topic>.sh` em ordem alfabética — fragments do bootstrap:
+   - `10-languages.sh` (fnm, composer PATH)
+   - `20-terminal-ux.sh` (starship, fzf, zoxide, ls/cat básicos)
+   - `30-shell.sh` (dircolors, bash-completion)
+   - `50-git.sh` (aliases git)
+3. `~/.bashrc.d/99-personal-aliases.sh` — **seu fork** (prefixo 99- garante ser o último em `.bashrc.d/`)
+4. `~/.bashrc.local` — **seu fork**, carregado por último pelo loader
 
-1. Criar `<area>/<nome>.example` com conteúdo comentado explicando cada campo.
-2. Adicionar entrada no array `MAPPINGS` em `install.sh`.
-3. Adicionar linha na tabela "O que é gerenciado" neste README.
-4. Commit com mensagem explicando **por quê** — ver §Evolução do template abaixo.
+**Consequência**: seu fork sempre vence se quiser sobrescrever algo do bootstrap. Sem fork do bootstrap, sem edit manual em `~/.bashrc`.
 
-## Setup inicial (um fork novo)
+## Evolução do template ↔ seu fork
 
-```bash
-git clone git@github.com:SEU_USER/dotfiles.git ~/dotfiles
-cd ~/dotfiles
-cp ssh/config.example ssh/config                       # e edite
-cp git/gitconfig.local.example git/gitconfig.local     # ponha seu nome/email
-cp shell/bashrc.local.example shell/bashrc.local       # (opcional) descomente o que quer
-cp shell/aliases.sh.example shell/aliases.sh           # (opcional)
-bash install.sh
-```
+GitHub Templates criam repos **sem história compartilhada** com o original, então `git merge upstream/main` não funciona. Modelo alternativo — **release-driven manual** (igual `create-react-app`, `vite`, `create-t3-app`):
 
-Depois, commits normais: `git add`, `git commit`, `git push`. Seu repo deve ser **privado** se contém hostnames internos, emails ou identidades.
+1. **No template** (quem mantém): cada mudança estrutural em `*.example`, `install.sh` ou `MAPPINGS` recebe:
+   - commit com **migration note** no corpo (passos concretos pra aplicar no fork)
+   - tag datada: `git tag -a v2026-MM-DD -m "..."`
+   - release no GitHub: `gh release create v2026-MM-DD --notes-from-tag`
 
-## Evolução do template (migração manual via release)
-
-Não há sincronização automática template ↔ forks. Repos criados via "Use this template" no GitHub não têm história compartilhada com o template original, então `git merge upstream/main` não funciona.
-
-Em vez disso, adotamos o modelo **release-driven manual**, como `create-react-app`, `vite`, `create-t3-app`:
-
-1. **No template** (quem mantém): cada mudança estrutural em `*.example`, `install.sh` ou MAPPINGS vira um commit com mensagem detalhada e uma tag datada:
-   ```bash
-   git commit -m "feat: add inputrc example + htoprc expanded..."  # com migration notes no corpo
-   git tag -a v2026-04-19 -m "…"
-   gh release create v2026-04-19 --notes-from-tag
-   ```
-2. **No seu fork**: periodicamente (ou quando receber notificação de release), cheque:
+2. **No seu fork** (periodicamente, ou ao receber notificação de release):
    ```bash
    git clone --depth 1 git@github.com:henryavila/dotfiles-template.git /tmp/tpl
+   cd /tmp/tpl && git checkout v2026-MM-DD
    diff -r /tmp/tpl/ ~/dotfiles/ | less
    ```
-3. Copiar/aplicar seletivamente o que interessa. Nada automático — você decide o que vale portar.
+   Aplica seletivamente o que interessa. Nada automático.
 
-### Formato esperado da migration note (no commit message do template)
+### Releases até agora
 
-Toda mudança estrutural deve trazer no corpo do commit:
-
-```
-## Migration (forks existentes)
-
-Tempo estimado: 5min. Arquivos afetados: shell/inputrc, install.sh.
-
-1. Clone o template: git clone --depth 1 <url> /tmp/tpl
-2. cp /tmp/tpl/shell/inputrc.example shell/
-3. Adicionar ao MAPPINGS: "shell/inputrc|$HOME/.inputrc"
-4. DRY_RUN=1 bash install.sh
-5. bash install.sh
-```
-
-Sem migration note, não tem tag/release — essa é a única disciplina do processo.
-
-## Precedência (quem vence quando há conflito)
-
-Quando o shell interativo carrega, em ordem:
-
-1. `~/.bashrc` (gerado por bootstrap/30-shell) — loader minimal
-2. `~/.bashrc.d/NN-<topic>.sh` em ordem alfabética — fragments do bootstrap (10-languages, 20-terminal-ux, 50-git, …)
-3. `~/.bashrc.d/99-personal-aliases.sh` — seu dotfiles (prefixo `99-` força ser o último)
-4. `~/.bashrc.local` — seu dotfiles (carregado por último pelo loader)
-
-Então **seu dotfiles sempre vence** se quiser sobrescrever algo do bootstrap — sem edição no bootstrap, sem fork.
+| Tag | Destaque |
+|-----|---------|
+| `v2026-04-19` | `.example` files enriquecidos (aliases.sh, bashrc.local, gitconfig.local, htoprc, s3cfg); remove mapping `shell/inputrc` (bootstrap cobre). |
+| `v2026-04-20` | Nova pasta `claude/` com manifest + stignore + scripts de sync/merge. `install.sh` ganha 3 MAPPINGS. |
 
 ## Docs
 
-`docs/` — aprendizados gerais de config (SSH gotchas, migration patterns, etc.). Ficam no template se são universalmente úteis; aprendizados específicos de infra (nomes de máquinas reais, etc.) ficam no seu fork pessoal.
+`docs/` — aprendizados universalmente úteis:
+
+- [`ssh-tailscale-mtu.md`](docs/ssh-tailscale-mtu.md) — SSH via Tailscale travando em KEX pós-quântico (fix: MTU do `tailscale0` pra 1200).
+
+Aprendizados específicos de infra (nomes de máquinas reais, padrões de migração contextuais) ficam no fork privado, não aqui.
+
+## Veja também
+
+- [`dev-bootstrap`](https://github.com/henryavila/dev-bootstrap) — instala o stack de dev + aplica este template.
+- Seu próprio fork — referencie pelo nome que você escolheu (convenção: `<user>/dotfiles` privado).
