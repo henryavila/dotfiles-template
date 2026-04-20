@@ -23,7 +23,7 @@ claude plugin list 2>&1 || echo "(falhou)"
 echo
 
 echo "=== MARKETPLACES ==="
-claude plugin marketplace list 2>&1 2>/dev/null || ls "$HOME/.claude/plugins/marketplaces/" 2>/dev/null || echo "(none)"
+claude plugin marketplace list 2>/dev/null || ls "$HOME/.claude/plugins/marketplaces/" 2>/dev/null || echo "(none)"
 echo
 
 echo "=== MCPs (todos — plugin e user-scope) ==="
