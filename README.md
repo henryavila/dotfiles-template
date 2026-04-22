@@ -4,6 +4,26 @@ Skeleton for personal dotfiles of any dev. Click **"Use this template"** on GitH
 
 > **Languages:** English (this file) · [Português](README.pt-BR.md)
 
+## Preview
+
+![](./assets/previews/p10k-bundled-hero.png)
+
+Covered: p10k prompt · bat syntax highlight · delta git diff · fzf-tab file/dir preview · Catppuccin Mocha across the stack.
+
+<details>
+<summary>Zoom — fzf-tab directory content preview</summary>
+
+![](./assets/previews/p10k-bundled-segments.png)
+
+</details>
+
+<details>
+<summary>Zoom — fzf-tab file content preview + git status integration</summary>
+
+![](./assets/previews/p10k-bundled-fzf-tab.png)
+
+</details>
+
 ## Role of this layer
 
 One of three repos in a layered stack:

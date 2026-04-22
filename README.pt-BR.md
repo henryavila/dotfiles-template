@@ -4,6 +4,26 @@ Skeleton para dotfiles pessoais de qualquer dev. Clique **"Use this template"** 
 
 > **Idiomas:** [English](README.md) · Português (este arquivo)
 
+## Preview
+
+![](./assets/previews/p10k-bundled-hero.png)
+
+Features: prompt p10k · syntax highlight via bat · diff render via delta · preview de arquivo/diretório via fzf-tab · Catppuccin Mocha em toda a stack.
+
+<details>
+<summary>Zoom — preview de conteúdo de diretório via fzf-tab</summary>
+
+![](./assets/previews/p10k-bundled-segments.png)
+
+</details>
+
+<details>
+<summary>Zoom — preview de conteúdo de arquivo via fzf-tab + git status</summary>
+
+![](./assets/previews/p10k-bundled-fzf-tab.png)
+
+</details>
+
 ## Papel desta camada
 
 Um dos três repos de um stack em camadas:
