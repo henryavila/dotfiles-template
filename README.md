@@ -98,11 +98,11 @@ bash install.sh             # apply
 
 - `~/.inputrc` — bootstrap/30-shell (word-kill, completion niceties)
 - `~/.bashrc`, `~/.zshrc` — bootstrap/30-shell loaders
-- Shell-level git aliases (`g`, `gs`, `gco`, `whoops`, `gmm`…) — bootstrap/50-git fragment
 - Global `~/.gitconfig` — bootstrap/50-git via `git config --global`
 - `~/.config/starship.toml`, `~/.tmux.conf` — bootstrap/20-terminal-ux, 40-tmux
+- **Universal shell aliases** (navigation, shortcuts, utility funcs, git, tmux, Laravel, Tailscale, Phase E modern CLI replacements) — each lives in its topic's `~/.bashrc.d/NN-<topic>.sh` + zsh equivalent. Full inventory in [`dev-bootstrap/docs/ALIASES.md`](https://github.com/henryavila/dev-bootstrap/blob/main/docs/ALIASES.md).
 
-If you catch yourself re-declaring any of these, stop. The bootstrap already covers them; your fork should only hold **identity + overrides**.
+If you catch yourself re-declaring any of these, stop. The bootstrap already covers them; your fork should only hold **identity + overrides + personal-only** (project names, paths, tool flags you prefer).
 
 ## Claude Sync (since v2026-04-20)
 
@@ -165,6 +165,7 @@ GitHub Templates create repos **without shared history** with the original, so `
 |-----|------------|
 | `v2026-04-19` | Enriched `.example` files (aliases.sh, bashrc.local, gitconfig.local, htoprc, s3cfg); dropped the `shell/inputrc` mapping (bootstrap covers it). |
 | `v2026-04-20` | New `claude/` folder with manifest + stignore + sync/merge scripts. `install.sh` picked up 3 new MAPPINGS. |
+| (untagged, 2026-04-23) | `shell/aliases.sh.example` slimmed down — everything generic (navigation, shortcuts, Laravel, tmux, Tailscale, Phase E CLI replacements) now ships in dev-bootstrap topic fragments. Example file focuses on **overrides** and **personal-only** additions, with commented templates showing the two categories separately. |
 
 ## Docs
 

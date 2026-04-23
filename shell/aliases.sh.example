@@ -1,40 +1,42 @@
-# shell/aliases.sh — personal aliases loaded into BOTH bash and zsh.
+# shell/aliases.sh — YOUR personal aliases, loaded into BOTH bash and zsh.
 #
 # Deployed by install.sh to:
 #   ~/.bashrc.d/99-personal-aliases.sh    (sourced by the bashrc loader)
 #   ~/.zshrc.d/99-personal-aliases.sh     (sourced by the zshrc loader)
 #
-# The `99-` prefix ensures these load LAST, after fragments from the dev-bootstrap
-# topics (10-languages, 20-terminal-ux, 50-git, ...). That means your personal
-# aliases WIN over the defaults — useful to override an alias from 50-git, for
-# example. But you should avoid duplicating what's already provided.
+# The `99-` prefix ensures these load LAST, after fragments from the
+# dev-bootstrap topics (10-languages, 20-terminal-ux, 30-shell, 40-tmux,
+# 50-git, 60-web-stack, 70-remote-access, …). Your personal aliases WIN
+# over the bootstrap defaults — but prefer to add value on top, not
+# duplicate what's already provided.
 #
-# Already provided by dev-bootstrap (do NOT re-add here unless you want to
-# override):
-#   20-terminal-ux → ls/ll/la/tree (eza), cat (bat), fd
-#   50-git         → g/gs/gl/gd/gco/gb/gp/gaa/gc/grb/gsh/glog/gloga/whoops/gmm
-#                    + __git_complete for g/gco/gb/gp/gd (bash only)
+# Already shipped by dev-bootstrap (do NOT re-add here unless overriding):
 #
-# Rename to `aliases.sh` (strip .example) and customize.
+#   30-shell          → .. / ... / .... / home / h / j / e / c / cla
+#                       grep/fgrep/egrep --color=auto + alert (Linux)
+#                       mkd / md / fs / tre helper functions
+#   20-terminal-ux    → ls/ll/la (eza), cat (bat), fd
+#                       Phase E: top→btop, df→duf, du→dust, ping→gping,
+#                                http→xh, ps→procs
+#   40-tmux           → tl / ta / tn / tm (attach-or-create 'main')
+#   50-git            → g/gs/gl/gd/gco/gb/gp/gaa/gc/grb/gsh/glog/gloga
+#                       whoops / gmm + __git_complete (bash)
+#   60-web-stack      → art / artisan / cinst / cup / fresh / migrate /
+#                       refresh / rollback / seed / db:reset / aserve /
+#                       dusk / phpunit / pu / puf / pud / cdump
+#                       + srn / ssn / srp / ssp / srr / ssr
+#   70-remote-access  → ts / tip / tup / tdown / tnetcheck / tping /
+#                       tssh + tip-of() helper
+#
+# Full inventory: https://github.com/henryavila/dev-bootstrap/blob/main/docs/ALIASES.md
+#
+# Rename to `aliases.sh` (strip .example) and customize below.
 
-# ---------- Navigation ----------
-alias ..='cd ..'
-alias ...='cd ../..'
-alias ....='cd ../../..'
-alias home='cd ~'
+# =====================================================================
+# Overrides — redefine something from the bootstrap to suit your taste
+# =====================================================================
 
-# ---------- Shell shortcuts ----------
-alias h='history'
-alias c='clear'
-alias cla='clear && ls -la'
-
-# ---------- grep colored (idempotent — most distros already set this) ----------
-alias grep='grep --color=auto'
-alias fgrep='fgrep --color=auto'
-alias egrep='egrep --color=auto'
-
-# ---------- eza with icons (overrides the simpler 20-terminal-ux defaults) ----------
-# Uncomment if you want a Nerd-Font-styled ls. Requires a Nerd Font in the terminal.
+# Richer eza (the 20-terminal-ux baseline is deliberately simple):
 # if command -v eza >/dev/null 2>&1; then
 #     alias ls='eza --icons --group-directories-first'
 #     alias ll='eza -la --icons --group-directories-first --git'
@@ -42,64 +44,38 @@ alias egrep='egrep --color=auto'
 #     alias lt='eza --tree --icons --level=2'
 # fi
 
-# ---------- bat with auto style (override of 20-terminal-ux's plain style) ----------
-# if command -v bat >/dev/null 2>&1; then
-#     alias cat='bat --style=auto'
-# elif command -v batcat >/dev/null 2>&1; then
-#     alias bat='batcat'
-#     alias cat='batcat --style=auto'
-# fi
+# bat with auto style (20-terminal-ux uses --style=plain):
+# command -v bat    >/dev/null 2>&1 && alias cat='bat --style=auto'
+# command -v batcat >/dev/null 2>&1 && alias cat='batcat --style=auto'
 
-# ---------- Laravel / PHP — opt-in (only if you develop in Laravel) ----------
-# alias art='php artisan'
-# alias cinst='composer install'
-# alias cup='composer update'
-# alias cdump='composer dump-autoload -o'
-# alias fresh='php artisan migrate:fresh'
-# alias migrate='php artisan migrate'
-# alias phpunit='./vendor/bin/phpunit'
-# alias pu='./vendor/bin/phpunit'
-# alias puf='./vendor/bin/phpunit --filter'
+# =====================================================================
+# Personal shortcuts — project names, paths, tool flags you like
+# =====================================================================
 
-# ---------- Service restart (WSL / Linux running Laravel stack) ----------
-# if command -v php >/dev/null 2>&1; then
-#     _PHP_VERSION=$(php -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;' 2>/dev/null || true)
-# fi
-# alias srn='sudo service nginx restart'
-# alias ssn='sudo service nginx status'
-# [ -n "${_PHP_VERSION:-}" ] && alias srp="sudo service php${_PHP_VERSION}-fpm restart"
-# alias srr='sudo service redis restart'
+# tmux project session shortcuts (same attach-or-create pattern as `tm`):
+# alias tmyproj='tmux new -A -s myproject'
+# alias twork='tmux new -A -s work'
 
-# ---------- tmux ----------
-# alias tl='tmux ls'
-# alias ta='tmux attach -t'
-# alias tn='tmux new -s'
-
-# ---------- Tailscale ----------
-# alias ts='tailscale status'
-# alias tip='tailscale ip -4'
-
-# ---------- Claude Code ----------
+# Claude Code convenience (opt-in — uses --dangerously-skip-permissions;
+# YOUR choice whether to adopt this, NOT something the public bootstrap
+# ships because it bypasses approval gates for every spawned agent):
 # alias cc='claude --dangerously-skip-permissions'
 # alias ccc='claude --dangerously-skip-permissions --continue'
 # alias ccr='claude --dangerously-skip-permissions --resume'
 
-# ---------- Notify helper (usage: `make build; alert`) ----------
-# alias alert='notify-send --urgency=low -i "$([ $? = 0 ] && echo terminal || echo error)" "$(history|tail -n1|sed -e '\''s/^\s*[0-9]\+\s*//;s/[;&|]\s*alert$//'\'')"'
+# Quick cd to frequently-accessed paths:
+# alias proj='cd ~/code/web/myproject'
 
-# ---------- Functions ----------
+# Tool launchers with your preferred flags:
+# alias lg='lazygit'
+# alias ka='kubectl apply -f'
 
-# mkdir + cd
-# mkd() { mkdir -p "$@" && cd "$@" || return; }
+# =====================================================================
+# Personal functions
+# =====================================================================
 
-# Total size of files / dir contents
-# fs() {
-#     local arg
-#     if du -b /dev/null > /dev/null 2>&1; then arg=-sbh; else arg=-sh; fi
-#     if [ -n "$*" ]; then du "$arg" -- "$@"; else du "$arg" .[^.]* ./*; fi
-# }
-
-# tree with hidden files, ignoring .git/node_modules, paged via less
-# tre() {
-#     tree -aC -I '.git|node_modules|bower_components|.venv|vendor' --dirsfirst "$@" | less -FRNX
+# Example: quick "open this project in my editor"
+# edit() {
+#     local root="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+#     code "$root"
 # }
