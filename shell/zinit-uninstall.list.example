@@ -1,0 +1,28 @@
+# shell/zinit-uninstall.list — zinit plugins this fork used to load
+# but no longer does. Read every run by install.sh; each entry is an
+# `owner/repo` spec (the same form passed to `zinit light`).
+#
+# To activate: rename this file to `shell/zinit-uninstall.list` (drop the
+# `.example` suffix) and add one plugin spec per line.
+#
+# Why this exists: removing a `zinit light X` line from your zshrc.local
+# stops loading the plugin into the next zsh session, but does NOT clean
+# up zinit's plugin cache at ~/.local/share/zinit/plugins/<owner>---<repo>/.
+# Listing the spec here makes install.sh do `rm -rf` on the cache the next
+# time it runs (idempotent — silent when already absent).
+#
+# Format: one `owner/repo` per line. Comments (#) and blank lines ignored.
+# Sandbox: entries containing `..` or starting/ending with `/` are rejected.
+#
+# Workflow when retiring a zinit plugin:
+#   1. Remove the `zinit light owner/repo` line from shell/zshrc.local
+#   2. Add `owner/repo` here (in this same commit)
+#   3. Run `bash install.sh` — install.sh purges the cache.
+#
+# Without step 2, the plugin keeps loading from cache forever on machines
+# that already had it installed.
+
+# Examples (uncomment to use):
+#
+# MichaelAquilina/zsh-you-should-use
+# old-org/abandoned-plugin
