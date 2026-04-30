@@ -39,6 +39,17 @@ MAPPINGS=(
     "claude/manifest/mcps-user.sh|$HOME/.claude/manifest/mcps-user.sh"
     "claude/stignore/claude-config.stignore|$HOME/.claude/.stignore"
     "claude/stignore/claude-mem.stignore|$HOME/.claude-mem/.stignore"
+    # Plugin replication system (manifest-based; alternative to Phase 6 Syncthing
+    # for ~/.claude/. See claude/manifest/README.md for the workflow).
+    "claude/scripts/claude-snapshot.sh|$HOME/.local/bin/claude-snapshot"
+    "claude/scripts/claude-replicate.sh|$HOME/.local/bin/claude-replicate"
+    "claude/scripts/claude-promote.sh|$HOME/.local/bin/claude-promote"
+    "claude/manifest/shared.json|$HOME/.claude/manifest/shared.json|once"
+    # Auto-update system (manual entry points; motor + hook + conf live in repo).
+    # See docs section "Auto-update — keep machines aligned with `bup` + `dotup`".
+    # Hook is sourced from shell/aliases.sh.example only when conf is active.
+    "scripts/bup|$HOME/.local/bin/bup"
+    "scripts/dotup|$HOME/.local/bin/dotup"
 )
 
 # Track placeholder deploys so we can remind the user at the end.

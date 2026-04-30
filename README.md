@@ -94,8 +94,10 @@ bash install.sh             # apply
 | `claude/stignore/claude-config.stignore` | `~/.claude/.stignore` (controls Syncthing under `~/.claude/`) | overwrite |
 | `claude/stignore/claude-mem.stignore` | `~/.claude-mem/.stignore` | overwrite |
 | `shell/zinit-uninstall.list` | _(read in-place; not deployed)_ | drift cleanup |
+| `scripts/doctor.sh` | _(invoked from repo: `bash ~/dotfiles/scripts/doctor.sh`)_ | drift detector |
 
 > `shell/zinit-uninstall.list` is consumed during `bash install.sh` to purge the zinit plugin cache for any plugin you stopped loading from `shell/zshrc.local`. See [Removing zinit plugins](#removing-zinit-plugins-drift-cleanup) below.
+> `scripts/doctor.sh` reports drift between repo sources and deployed files. See [Drift detection — `doctor.sh`](#drift-detection--doctorsh) below.
 
 ### What this template does NOT manage (comes from `dev-bootstrap`)
 
@@ -144,6 +146,31 @@ When opening an interactive shell:
 4. `~/.bashrc.local` — **your fork**, loaded last of all by the loader.
 
 **Consequence:** your fork always wins if you want to override something from the bootstrap. No forking the bootstrap, no manual edits in `~/.bashrc`.
+
+## Drift detection — `doctor.sh`
+
+After `bash install.sh` deploys files, edits drift over time — `htop` rewrites its config when you change settings in its UI, you tweak `~/.zshrc.local` directly instead of in the repo, an installer overwrites `~/.bashrc`, etc. `doctor.sh` is a zero-dependency drift detector that walks your `MAPPINGS` and reports per file:
+
+- ✓ **up to date** — repo src and deployed dst match byte-for-byte
+- ! **missing** — `install.sh` never ran, or you deleted the file
+- ✗ **drifted** — dst exists but differs from src (next `install.sh` run will overwrite)
+- ! **marker miss** — `~/.bashrc`/`~/.zshrc`/`~/.tmux.conf` don't carry the `managed by dev-bootstrap` header (hand-edited or deployed by another tool)
+
+```bash
+bash ~/dotfiles/scripts/doctor.sh             # human-readable report
+bash ~/dotfiles/scripts/doctor.sh --quiet     # only drift/missing lines
+bash ~/dotfiles/scripts/doctor.sh --json      # structured (for automation)
+```
+
+Exit code is **0** when clean, **1** when drift or missing files were found — wire it into a pre-commit hook or CI check if you want.
+
+**Override knobs** (forks not using dev-bootstrap as installer):
+
+```bash
+DOCTOR_MARKER_FILES="$HOME/.zshrc"  \
+DOCTOR_MARKER_STRING="managed by chezmoi"  \
+bash scripts/doctor.sh
+```
 
 ## Removing zinit plugins (drift cleanup)
 

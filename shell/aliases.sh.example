@@ -79,3 +79,46 @@
 #     local root="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 #     code "$root"
 # }
+
+# =====================================================================
+# Optional: mesh-guard — multi-machine / multi-repo Claude Code helper
+# =====================================================================
+# When you `cd` into a sibling repo (template, work project, etc.) and run
+# `claude`, the session loads with no memory/PROJECT_STATUS context. The
+# mesh-guard wrapper detects that and offers to redirect you to your main
+# dotfiles repo first.
+#
+# Activation (opt-in):
+#   1. cp shell/mesh-repos.list.example shell/mesh-repos.list
+#   2. Edit shell/mesh-repos.list — list one repo path per line
+#   3. Uncomment the source line below
+#
+# When mesh-repos.list is absent, the wrapper is a no-op pass-through.
+#
+# DOTFILES_DIR_LOCAL="${DOTFILES_DIR:-$HOME/dotfiles}"
+# [[ -n "${ZSH_VERSION:-}" ]] && [[ -f "$DOTFILES_DIR_LOCAL/shell/mesh-guard.zsh" ]] && \
+#     source "$DOTFILES_DIR_LOCAL/shell/mesh-guard.zsh"
+
+# =====================================================================
+# Optional: auto-update — pull dotfiles + dev-bootstrap on shell start
+# =====================================================================
+# When activated, every interactive zsh session runs the auto-update motor
+# at first prompt. Motor checks each repo in AUTO_UPDATE_REPOS for upstream
+# diff, pulls if clean, re-runs install.sh on the affected repo, prompts
+# `exec zsh` if shell rc files changed.
+#
+# Activation (opt-in):
+#   1. cp scripts/auto-update.conf.example scripts/auto-update.conf
+#   2. Edit scripts/auto-update.conf — uncomment AUTO_UPDATE_REPOS entries
+#   3. Uncomment the source line below
+#
+# Manual entry points (deployed to ~/.local/bin/ unconditionally):
+#   bup            update dev-bootstrap (system) only
+#   dotup          update dotfiles (preferences) only
+#   bup && dotup   both (system → preferences ordering)
+#
+# Without an active auto-update.conf, motor exits 1 and hook does nothing.
+#
+# DOTFILES_DIR_LOCAL="${DOTFILES_DIR:-$HOME/dotfiles}"
+# [[ -n "${ZSH_VERSION:-}" ]] && [[ -f "$DOTFILES_DIR_LOCAL/scripts/auto-update.conf" ]] && \
+#     source "$DOTFILES_DIR_LOCAL/shell/auto-update.zsh"

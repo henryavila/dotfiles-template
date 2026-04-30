@@ -1,0 +1,29 @@
+{
+  "_doc": "Curated list of marketplaces + plugins that MUST be present on every machine. This is the SOURCE OF TRUTH for replication. Per-machine experiments do NOT belong here — keep them local. Promote via `claude-promote NAME` (auto-edits this file) or by hand.",
+  "_curation_principle": "Add a plugin here ONLY if you intentionally want it on every machine. If you're testing or it's project-specific to one machine, leave it out. The descriptive snapshots in ./snapshots/ tell you what each machine actually has — this file tells the script what to align toward.",
+
+  "_activation_steps": [
+    "1. cp shared.json.example shared.json",
+    "2. Edit shared.json — add the marketplaces + plugins you want on every machine",
+    "3. Run claude-snapshot on each machine to capture current state",
+    "4. Run claude-replicate to see diff vs shared.json (read-only by default)",
+    "5. Run claude-replicate --apply to actually install missing items",
+    "6. Use claude-promote NAME to add a locally-installed item to shared.json"
+  ],
+
+  "marketplaces": {
+    "_example_marketplace": {
+      "_remove_underscore_prefix_when_using": true,
+      "source": "github",
+      "repo": "owner/repo",
+      "note": "What this marketplace provides"
+    }
+  },
+
+  "plugins": {
+    "_example_plugin@_example_marketplace": {
+      "_remove_underscore_prefix_when_using": true,
+      "note": "Why this plugin is universal — every machine needs it because <reason>"
+    }
+  }
+}

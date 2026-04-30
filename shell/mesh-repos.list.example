@@ -1,0 +1,20 @@
+# shell/mesh-repos.list — paths your `claude` invocations should auto-redirect
+# from. When the cwd matches any prefix below, mesh-guard.zsh offers to `cd`
+# you to $DOTFILES_DIR before running claude (so the memory/PROJECT_STATUS
+# loads correctly).
+#
+# To activate: rename this file to `shell/mesh-repos.list` and list one
+# absolute path per line. Comments (#) and blank lines ignored.
+#
+# Without an active mesh-repos.list file, the mesh-guard `claude()` wrapper
+# is a no-op pass-through (zero effect — just runs `command claude "$@"`).
+#
+# Format: one path per line. `~` and `$HOME` are expanded.
+# Sandbox: any cwd whose canonical path begins with the listed prefix triggers
+# the redirect prompt. To match a single subtree, list its parent.
+
+# Examples (uncomment + adapt to YOUR repos):
+#
+# $HOME/dev-bootstrap
+# $HOME/dotfiles-template
+# $HOME/work/some-project

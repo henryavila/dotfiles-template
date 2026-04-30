@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# dotup — manual entry point for dotfiles propagation.
+#
+# Spec: docs/2026-04-25-auto-update-spec.md §3.4 (wrapper-by-domain split).
+# Deployed to ~/.local/bin/dotup via dotfiles/install.sh.
+#
+# Domain: personal preferences (dotfiles install.sh, doctor).
+# Counterpart: `bup` covers system/server (dev-bootstrap topics + bootstrap.sh).
+# Compose `bup && dotup` when you want both sides synchronized.
+#
+# Difference from the shell-start hook: NEVER passes --from-shell-start, so
+# the auto-exec logic is suppressed. Mid-session you don't want your shell
+# silently replaced (jobs, env tweaks, scrollback all lost).
+#
+# Usage:
+#   dotup               incremental: fetch, pull, run install.sh if diff present
+#   dotup --full        force: fetch, pull, run `bash install.sh` always
+#   dotup --reset-auth  clear auth-failed flags (passes through to motor)
+#   dotup --help        usage from auto-update.sh
+
+MOTOR="${DOTFILES_DIR:-$HOME/dotfiles}/scripts/auto-update.sh"
+if [[ ! -x "$MOTOR" ]]; then
+    echo "dotup: motor not found or not executable at $MOTOR" >&2
+    echo "dotup: run \`bash ~/dotfiles/install.sh\` to redeploy, or check the dotfiles clone" >&2
+    exit 1
+fi
+exec "$MOTOR" --repo dotfiles "$@"

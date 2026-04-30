@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# bup — manual entry point for dev-bootstrap propagation.
+#
+# Spec: docs/2026-04-25-auto-update-spec.md §3.4 (wrapper-by-domain split).
+# Deployed to ~/.local/bin/bup via dotfiles/install.sh.
+#
+# Domain: system / server provisioning (apt, brew, services, topic install scripts).
+# Counterpart: `dotup` covers personal preferences (dotfiles install.sh).
+# Compose `bup && dotup` when you want both sides synchronized.
+#
+# Usage:
+#   bup               incremental: fetch, pull, re-run install scripts of affected topics
+#   bup --full        force: fetch, pull, run `bash bootstrap.sh --non-interactive`
+#   bup --reset-auth  clear auth-failed flags (passes through to motor)
+#   bup --help        usage from auto-update.sh
+
+MOTOR="${DOTFILES_DIR:-$HOME/dotfiles}/scripts/auto-update.sh"
+if [[ ! -x "$MOTOR" ]]; then
+    echo "bup: motor not found or not executable at $MOTOR" >&2
+    echo "bup: run \`bash ~/dotfiles/install.sh\` to redeploy, or check the dotfiles clone" >&2
+    exit 1
+fi
+exec "$MOTOR" --repo dev-bootstrap "$@"
