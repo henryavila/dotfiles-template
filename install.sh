@@ -122,6 +122,50 @@ if [[ "$found_any" -eq 0 ]]; then
     exit 0
 fi
 
+# ─── zinit drift cleanup ───────────────────────────────────────────────
+# Reads shell/zinit-uninstall.list (you create it from the .example) and
+# removes the zinit plugin cache for each `owner/repo` listed. Idempotent:
+# silent when the cache dir is already absent.
+#
+# Why this is needed: removing `zinit light owner/repo` from zshrc.local
+# stops loading the plugin in new shells, but does not clean up the cache
+# at ~/.local/share/zinit/plugins/<owner>---<repo>. zinit's own
+# `zinit delete` requires zinit loaded inside zsh — `rm -rf` on the cache
+# dir works regardless and is what we use here.
+#
+# See shell/zinit-uninstall.list.example for format and rationale.
+zinit_uninstall_file="$HERE/shell/zinit-uninstall.list"
+if [[ -f "$zinit_uninstall_file" ]]; then
+    zinit_plugins_dir="$HOME/.local/share/zinit/plugins"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"
+        [[ -z "${line// }" ]] && continue
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        spec="${line#"${line%%[![:space:]]*}"}"
+        spec="${spec%"${spec##*[![:space:]]}"}"
+        case "$spec" in
+            */*) ;;
+            *)   warn "zinit-uninstall: '$spec' malformed (expected owner/repo) — skipping"
+                 continue ;;
+        esac
+        case "$spec" in
+            *..*|*//*|/*|*/)
+                warn "zinit-uninstall: '$spec' rejected by sandbox — skipping"
+                continue ;;
+        esac
+        mangled="${spec//\//---}"
+        target="$zinit_plugins_dir/$mangled"
+        if [[ -d "$target" ]]; then
+            if [[ "$DRY_RUN" == "1" ]]; then
+                log "would rm -rf $target (zinit-uninstall: $spec)"
+            else
+                log "zinit-uninstall: removing $spec ($target)"
+                rm -rf "$target"
+            fi
+        fi
+    done < "$zinit_uninstall_file"
+fi
+
 # Final reminder if any deployed file still has placeholders
 if [[ "${#needs_edit[@]}" -gt 0 ]]; then
     echo

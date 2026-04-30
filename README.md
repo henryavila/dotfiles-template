@@ -93,6 +93,9 @@ bash install.sh             # apply
 | `claude/manifest/mcps-user.sh` | `~/.claude/manifest/mcps-user.sh` | overwrite |
 | `claude/stignore/claude-config.stignore` | `~/.claude/.stignore` (controls Syncthing under `~/.claude/`) | overwrite |
 | `claude/stignore/claude-mem.stignore` | `~/.claude-mem/.stignore` | overwrite |
+| `shell/zinit-uninstall.list` | _(read in-place; not deployed)_ | drift cleanup |
+
+> `shell/zinit-uninstall.list` is consumed during `bash install.sh` to purge the zinit plugin cache for any plugin you stopped loading from `shell/zshrc.local`. See [Removing zinit plugins](#removing-zinit-plugins-drift-cleanup) below.
 
 ### What this template does NOT manage (comes from `dev-bootstrap`)
 
@@ -142,6 +145,18 @@ When opening an interactive shell:
 
 **Consequence:** your fork always wins if you want to override something from the bootstrap. No forking the bootstrap, no manual edits in `~/.bashrc`.
 
+## Removing zinit plugins (drift cleanup)
+
+Removing `zinit light owner/repo` from `shell/zshrc.local` stops loading the plugin in **new** zsh sessions, but does **not** clean up zinit's plugin cache at `~/.local/share/zinit/plugins/<owner>---<repo>/`. On machines you provisioned before, the cache stays around forever.
+
+To handle this cleanly:
+
+1. Activate the manifest once: `cp shell/zinit-uninstall.list.example shell/zinit-uninstall.list`.
+2. When you remove a `zinit light owner/repo` line, add `owner/repo` to `shell/zinit-uninstall.list` **in the same commit**.
+3. Run `bash install.sh`. The script does `rm -rf` on the cache dir for each entry (idempotent — silent when already absent).
+
+Format and rationale are documented inside the file. Companion to `dev-bootstrap`'s `lib/uninstall.sh` (which handles the brew/apt/clone side of the same retirement when the plugin was installed by a topic).
+
 ## Template ↔ your fork evolution
 
 GitHub Templates create repos **without shared history** with the original, so `git merge upstream/main` doesn't work. Alternative model — **release-driven manual** (same as `create-react-app`, `vite`, `create-t3-app`):
@@ -166,6 +181,7 @@ GitHub Templates create repos **without shared history** with the original, so `
 | `v2026-04-19` | Enriched `.example` files (aliases.sh, bashrc.local, gitconfig.local, htoprc, s3cfg); dropped the `shell/inputrc` mapping (bootstrap covers it). |
 | `v2026-04-20` | New `claude/` folder with manifest + stignore + sync/merge scripts. `install.sh` picked up 3 new MAPPINGS. |
 | (untagged, 2026-04-23) | `shell/aliases.sh.example` slimmed down — everything generic (navigation, shortcuts, Laravel, tmux, Tailscale, Phase E CLI replacements) now ships in dev-bootstrap topic fragments. Example file focuses on **overrides** and **personal-only** additions, with commented templates showing the two categories separately. |
+| `v2026-04-30` | New `shell/zinit-uninstall.list.example` + `install.sh` consumes it to purge zinit plugin cache for retired plugins. Generic mechanism — not opinionated about which plugins you use. Companion to `dev-bootstrap`'s new `lib/uninstall.sh` (handles brew/apt/clone side). |
 
 ## Docs
 
