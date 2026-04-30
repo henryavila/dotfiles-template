@@ -45,8 +45,9 @@ _probe() {
     local stub_motor="$probe_dir/auto-update.sh"
     local fake_dotfiles="$probe_dir/dotfiles/scripts"
     mkdir -p "$fake_dotfiles"
-    # The hook hardcodes $HOME/dotfiles/scripts/auto-update.sh — we
-    # symlink probe_dir to act as $HOME so the path resolves.
+    # The hook resolves the motor via ${DOTFILES_DIR:-$HOME/dotfiles}/scripts/
+    # auto-update.sh. We set HOME=probe_dir below, so the fallback path
+    # ($HOME/dotfiles/scripts/auto-update.sh) resolves into our stub.
     ln -s "$stub_motor" "$fake_dotfiles/auto-update.sh"
 
     cat > "$stub_motor" <<EOF
@@ -154,6 +155,64 @@ echo
 
 test_hook_registers_runs_once_then_self_removes
 test_hook_recursion_guard_skips_when_flag_set
+
+# ─── Closes adversarial-review HIGH (D41 audit) ────────────────────
+# The previous tests STRIP the `[[ ! -t 1 || ! -t 2 ]]` defensive guard
+# from the hook so the motor stub fires under non-tty zsh. That keeps the
+# guard untested — a future commit deleting the guard would still ship
+# green. This third test KEEPS the guard active and asserts that under
+# non-tty conditions:
+#   (a) the motor stub is NOT called (guard fired),
+#   (b) the function still self-removes (no leak into the user's session).
+test_hook_tty_guard_bails_under_non_tty() {
+    local probe_dir; probe_dir=$(mktemp -d "/tmp/hook-tty-guard.XXXXXX")
+    local stub_motor="$probe_dir/auto-update.sh"
+    local fake_dotfiles="$probe_dir/dotfiles/scripts"
+    mkdir -p "$fake_dotfiles"
+    ln -s "$stub_motor" "$fake_dotfiles/auto-update.sh"
+
+    cat > "$stub_motor" <<EOF
+#!/usr/bin/env bash
+echo "MOTOR-CALLED-WITH: \$*" >> "$probe_dir/motor.log"
+exit 0
+EOF
+    chmod +x "$stub_motor"
+
+    # Strip ONLY the interactive + /dev/tty guards (so source proceeds);
+    # KEEP the inner `[[ ! -t 1 || ! -t 2 ]]` defensive bail intact.
+    local hook_test="$probe_dir/auto-update-test.zsh"
+    sed -e '/\[\[ -o interactive \]\]/d' \
+        -e '/\/dev\/tty/d' \
+        "$HOOK" > "$hook_test"
+
+    # zsh -f below has no controlling tty; pipe stdin/stdout through here-doc
+    # so fd 1 / fd 2 are NOT terminals. The defensive guard inside
+    # _auto_update_first_precmd should fire and bail, NOT call the motor.
+    HOME="$probe_dir" zsh -f <<EOF >>"$probe_dir/probe.out" 2>&1
+unset AUTO_UPDATE_RECURSED
+typeset -ga precmd_functions
+. "$hook_test"
+echo "BEFORE: function_defined=\$(typeset -f _auto_update_first_precmd >/dev/null 2>&1 && echo yes || echo no)"
+for f in \$precmd_functions; do
+    "\$f" 2>/dev/null
+done
+echo "AFTER: function_defined=\$(typeset -f _auto_update_first_precmd >/dev/null 2>&1 && echo yes || echo no)"
+EOF
+
+    local out; out=$(cat "$probe_dir/probe.out")
+    local motor_log; motor_log=$(cat "$probe_dir/motor.log" 2>/dev/null || true)
+    rm -rf "$probe_dir"
+
+    # Pass iff motor was NOT called AND function was unfunction'd.
+    if [[ -z "$motor_log" ]] && \
+       echo "$out" | grep -q "BEFORE: function_defined=yes" && \
+       echo "$out" | grep -q "AFTER: function_defined=no"; then
+        _pass "tty defensive guard bails under non-tty (motor not called, function still unfunction'd)"
+    else
+        _fail "tty guard regression: motor_log=[$motor_log]" "$out"
+    fi
+}
+test_hook_tty_guard_bails_under_non_tty
 
 echo
 total=$((PASS + FAIL))

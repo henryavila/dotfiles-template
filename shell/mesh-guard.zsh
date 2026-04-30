@@ -48,6 +48,11 @@ _mesh_load_repos() {
 }
 
 claude() {
+    # `local -a` declares the array in the caller's frame; zsh's dynamic
+    # scoping means assignments inside _mesh_load_repos modify THIS local
+    # binding, not a global. Without `local`, `_MESH_REPOS=()` inside the
+    # helper would leak the array into the user's shell namespace forever.
+    local -a _MESH_REPOS
     if [[ "$1" == "--here" ]]; then
         shift
     else

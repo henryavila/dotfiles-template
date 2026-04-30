@@ -1,6 +1,12 @@
 # shellcheck shell=bash disable=all
 # shell/auto-update.zsh — fire auto-update on zsh shell start.
 #
+# Original spec (synchronous version): docs/2026-04-25-auto-update-spec.md §3.2
+# in the private dotfiles repo. The current behavior (precmd-deferred) was
+# introduced post-D38 to silence P10K instant_prompt's fd-capture warning;
+# spec § stale on this point — see PROJECT_STATUS D37/D38/D41 for the
+# current contract.
+#
 # Sourced from shell/aliases.sh under `[[ -n "$ZSH_VERSION" ]]` guard so bash
 # deploys (bashrc.d/) ignore us.
 #

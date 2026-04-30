@@ -10,8 +10,11 @@
 # is a no-op pass-through (zero effect — just runs `command claude "$@"`).
 #
 # Format: one path per line. `~` and `$HOME` are expanded.
-# Sandbox: any cwd whose canonical path begins with the listed prefix triggers
-# the redirect prompt. To match a single subtree, list its parent.
+# Match: STRING-PREFIX (not path-component). cwd `$HOME/dev-bootstrap-fork`
+# matches a list entry `$HOME/dev-bootstrap` because the latter is a string
+# prefix of the former. Use the most specific path you actually want to
+# trigger on (e.g. always include the trailing component, never list
+# `$HOME` alone).
 
 # Examples (uncomment + adapt to YOUR repos):
 #

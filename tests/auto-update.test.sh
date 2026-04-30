@@ -623,6 +623,42 @@ test_wrapper_bup_passes_dev_bootstrap_repo
 test_wrapper_dotup_passes_dotfiles_repo
 test_wrapper_pre_flight_motor_missing
 
+test_wrapper_honors_dotfiles_dir_override() {
+    # Closes adversarial-review HIGH (D41 audit): without this test, reverting
+    # `MOTOR=${DOTFILES_DIR:-$HOME/dotfiles}/...` back to `MOTOR=$HOME/dotfiles/...`
+    # in scripts/{bup,dotup} ships green because every other test sets HOME
+    # to a stub_dir that ALSO ends with `/dotfiles`. We need a fixture where
+    # $DOTFILES_DIR explicitly points elsewhere AND `$HOME/dotfiles` does NOT
+    # exist — only then does the wrapper actually exercise the env override.
+    local stub_dir; stub_dir=$(mktemp -d "$TESTROOT/wrap-dotfilesdir.XXXX")
+    local custom_dir="$stub_dir/work-dotfiles"
+    mkdir -p "$custom_dir/scripts"
+    cat > "$custom_dir/scripts/auto-update.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "MOTOR-AT: $0 ARGS: $*"
+exit 0
+EOF
+    chmod +x "$custom_dir/scripts/auto-update.sh"
+
+    # CRUCIAL: do NOT create $stub_dir/dotfiles/. If the wrapper falls back
+    # to the hardcoded $HOME/dotfiles path, it will fail loudly here.
+    local out
+    out=$(HOME="$stub_dir" DOTFILES_DIR="$custom_dir" bash "$ROOT/scripts/bup" --reset-auth 2>&1)
+    if echo "$out" | grep -q "MOTOR-AT: $custom_dir/scripts/auto-update.sh"; then
+        _pass "bup honors DOTFILES_DIR (motor at custom path, not \$HOME/dotfiles)"
+    else
+        _fail "bup ignored DOTFILES_DIR — refactor regressed" "$out"
+    fi
+
+    out=$(HOME="$stub_dir" DOTFILES_DIR="$custom_dir" bash "$ROOT/scripts/dotup" --reset-auth 2>&1)
+    if echo "$out" | grep -q "MOTOR-AT: $custom_dir/scripts/auto-update.sh"; then
+        _pass "dotup honors DOTFILES_DIR (motor at custom path, not \$HOME/dotfiles)"
+    else
+        _fail "dotup ignored DOTFILES_DIR — refactor regressed" "$out"
+    fi
+}
+test_wrapper_honors_dotfiles_dir_override
+
 echo
 total=$((PASS + FAIL))
 if (( FAIL == 0 )); then
