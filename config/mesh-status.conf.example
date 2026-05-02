@@ -1,0 +1,52 @@
+# mesh-status — config local (copiado de mesh-status.conf.example)
+#
+# Bash-sourceable by both scripts/mesh-snap and scripts/mesh-status.
+# Spec: docs/2026-05-01-mesh-status-spec.md §5.4.
+
+# Alias deste host — OPTIONAL override.
+#
+# Resolution order (mesh-snap):
+#   1. $MESH_HOST_ALIAS (this var) — explicit override, highest priority
+#   2. lookup of $(hostname -s) in $MESH_TAILSCALE_ALIAS_MAP below
+#   3. fallback: $(hostname -s) raw
+#
+# In practice you only need to uncomment this if your hostname is NOT
+# already in MESH_TAILSCALE_ALIAS_MAP. Since that map is populated below
+# with all known mesh hosts, most users can leave this commented:
+#
+#   ultron (M1)   — hostname "ultron"        → map → "ultron"  ✓
+#   mac (M2)      — hostname "code-server"   → map → "mac"     ✓
+#   crc (M4)      — hostname "crcmg005078"   → map → "crc"     ✓
+#
+# Set this var only when adding a brand-new host that isn't in the map
+# yet, OR to force a different alias from the map default.
+# Allowed chars: [A-Za-z0-9_-] (anything else risks filename trouble).
+#
+# MESH_HOST_ALIAS="ultron"
+
+# Diretório onde snapshots vivem (Syncthing folder dedicada)
+MESH_SYNC_DIR="$HOME/Sync/mesh-status"
+
+# Audit history local (não sincado pelo Syncthing)
+MESH_HISTORY_DIR="$HOME/.local/state/dotfiles/mesh-history"
+MESH_HISTORY_RETENTION_DAYS=90
+
+# Repos rastreados (subset por host se algum não estiver clonado)
+MESH_REPOS=("dev-bootstrap" "dotfiles" "dotfiles-template")
+
+# Path overrides — defaults to $HOME/<repo-name>. Use underscores in the
+# var name where the repo name has hyphens (bash limitation).
+# MESH_REPO_PATH_dotfiles_template="/path/custom"
+
+# Map of tailnet HostName → canonical alias for the panel.
+# Resolves "crcmg005078" → "crc", "code-server" → "mac" etc.
+MESH_TAILSCALE_ALIAS_MAP='{"crcmg005078":"crc","ultron":"ultron","code-server":"mac"}'
+
+# Reference branch used for ahead/behind comparison (default: main)
+# MESH_REFERENCE_BRANCH="main"
+
+# Hard timeout (seconds) for `git fetch` per repo. Default 3.
+# MESH_FETCH_TIMEOUT=3
+
+# Per-peer timeout (seconds) for `mesh-status --refresh` SSH triggers.
+# MESH_REFRESH_TIMEOUT=3

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "captured_at": "2998-12-30T08:30:00Z",
+  "captured_by": "mesh-snap/0.1.0",
+  "host": {"alias":"crc","hostname":"crcmg005078","os":"linux","os_release":"Ubuntu 24.04","kernel":"6.6","wsl":true,"arch":"x86_64"},
+  "repos": {
+    "dev-bootstrap": {"present":true,"path":"/home/y/dev-bootstrap","branch":"main","head_sha":"2cb8c44000000000000000000000000000000000","head_short":"2cb8c44","tag_describe":"v0","dirty":false,"ahead":0,"behind":5,"origin_main_sha":"2cb8c44000000000000000000000000000000000","last_fetched_at":"2998-12-30T08:14:00Z","last_applied":{"sha":"2cb8c44000000000000000000000000000000000","at":"2998-12-30T08:14:00Z"}},
+    "dotfiles": {"present":true,"path":"/home/y/dotfiles","branch":"main","head_sha":"67869b1000000000000000000000000000000000","head_short":"67869b1","tag_describe":"v0","dirty":false,"ahead":0,"behind":3,"origin_main_sha":"67869b1000000000000000000000000000000000","last_fetched_at":"2998-12-30T08:14:00Z","last_applied":{"sha":"67869b1000000000000000000000000000000000","at":"2998-12-30T08:14:00Z"}},
+    "dotfiles-template": {"present":false,"reason":"not_cloned"}
+  },
+  "drift": {"doctor_ran":true,"doctor_exit":1,"missing_count":1,"drift_count":2,"marker_absent_count":0,"items":[{"path":"/home/y/.bashrc","kind":"drift","detail":null}]},
+  "advisories": {"count":1,"items":[{"kind":"atuin_login","severity":"info","since":null,"detail":null}]},
+  "network": null
+}

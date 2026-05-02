@@ -39,6 +39,10 @@ MAPPINGS=(
     "claude/manifest/mcps-user.sh|$HOME/.claude/manifest/mcps-user.sh"
     "claude/stignore/claude-config.stignore|$HOME/.claude/.stignore"
     "claude/stignore/claude-mem.stignore|$HOME/.claude-mem/.stignore"
+    "scripts/mesh|$HOME/.local/bin/mesh"
+    "config/mesh-status.conf.example|$HOME/.config/dotfiles/mesh-status.conf|once"
+    "scripts/auto-update.conf.example|$HOME/.config/dotfiles/auto-update.conf|once"
+    "shell/auto-update.zsh.example|$HOME/.zshrc.d/auto-update.zsh"
 )
 
 # Track placeholder deploys so we can remind the user at the end.
@@ -90,6 +94,9 @@ deploy_one() {
             ;;
         "$HOME"/.bashrc.d/*|"$HOME"/.zshrc.d/*)
             chmod 0644 "$dst"
+            ;;
+        "$HOME"/.local/bin/*)
+            chmod 0755 "$dst"
             ;;
     esac
 

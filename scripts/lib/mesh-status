@@ -1,0 +1,1050 @@
+#!/usr/bin/env bash
+# scripts/mesh-status — viewer for the mesh-snap-produced snapshots.
+#
+# Reads $MESH_SYNC_DIR/*.json (replicated cross-host via Syncthing), computes
+# the mesh consensus per repo (which host has the freshest origin/main fetch),
+# and renders an overview table, drill-down detail, JSON, or surgically
+# rewrites §3 of .ai/memory/PROJECT_STATUS.md between markers.
+#
+# Spec: docs/2026-05-01-mesh-status-spec.md
+#
+# Usage:
+#   mesh-status                          overview table (default)
+#   mesh-status --detail <alias>         drill-down for one host
+#   mesh-status --write                  regenerate §3 of PROJECT_STATUS.md
+#                                        between <!-- mesh-status:start --> markers
+#   mesh-status --write --target PATH    override --write target (tests)
+#   mesh-status --no-snap                skip the local mesh-snap before render
+#   mesh-status --gc [--days N]          remove snapshots older than N days (default 30)
+#   mesh-status --json                   emit aggregated JSON of all snapshots
+#   mesh-status --refresh                opt-in: SSH-trigger mesh-snap on online peers
+#   mesh-status --help                   show this help
+#
+# Exit codes:
+#   0  success
+#   1  fatal (sync folder missing without --no-snap, etc.)
+#   2  warnings (peer offline, stale snapshot >7d)
+#
+# Bash 3.2 compatible.
+
+set -uo pipefail
+# NOTE: not -e — collector failures are tolerated; we render whatever is on disk.
+
+MESH_STATUS_VERSION="0.1.0"
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ─── Args ────────────────────────────────────────────────────────────
+MODE="overview"          # overview | detail | write | json | gc
+DETAIL_ALIAS=""
+WRITE_TARGET=""
+NO_SNAP=0
+REFRESH=0
+GC_DAYS=30
+
+while (( $# > 0 )); do
+    case "$1" in
+        --detail)
+            shift
+            DETAIL_ALIAS="${1:-}"
+            if [[ -z "$DETAIL_ALIAS" || "$DETAIL_ALIAS" == --* ]]; then
+                echo "mesh-status: --detail requires a host alias" >&2
+                exit 1
+            fi
+            MODE="detail"
+            ;;
+        --write)
+            MODE="write"
+            ;;
+        --target)
+            shift
+            WRITE_TARGET="${1:-}"
+            if [[ -z "$WRITE_TARGET" || "$WRITE_TARGET" == --* ]]; then
+                echo "mesh-status: --target requires a path" >&2
+                exit 1
+            fi
+            ;;
+        --no-snap)
+            NO_SNAP=1
+            ;;
+        --json)
+            MODE="json"
+            ;;
+        --refresh)
+            REFRESH=1
+            ;;
+        --gc)
+            MODE="gc"
+            ;;
+        --days)
+            shift
+            GC_DAYS="${1:-}"
+            if ! [[ "$GC_DAYS" =~ ^[0-9]+$ ]]; then
+                echo "mesh-status: --days requires a non-negative integer" >&2
+                exit 1
+            fi
+            ;;
+        --help|-h)
+            sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *)
+            echo "mesh-status: unknown arg: $1" >&2
+            echo "Try 'mesh-status --help'" >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+# ─── Output helpers ──────────────────────────────────────────────────
+warn() { printf '! %s\n' "$1" >&2; }
+err()  { printf '✗ %s\n' "$1" >&2; }
+
+# ─── Dep check ───────────────────────────────────────────────────────
+if ! command -v jq >/dev/null 2>&1; then
+    err "jq missing — install via dev-bootstrap topic 00-core"
+    exit 1
+fi
+
+# ─── Config (same defaults as mesh-snap) ─────────────────────────────
+CONF="${MESH_STATUS_CONF:-$HOME/.config/dotfiles/mesh-status.conf}"
+MESH_SYNC_DIR="${MESH_SYNC_DIR:-$HOME/Sync/mesh-status}"
+MESH_HISTORY_DIR="${MESH_HISTORY_DIR:-$HOME/.local/state/dotfiles/mesh-history}"
+MESH_REFERENCE_BRANCH="${MESH_REFERENCE_BRANCH:-main}"
+MESH_REPOS=("dev-bootstrap" "dotfiles" "dotfiles-template")
+
+if [[ -r "$CONF" ]]; then
+    # shellcheck disable=SC1090
+    source "$CONF"
+fi
+
+# ─── Color / TTY ─────────────────────────────────────────────────────
+if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]; then
+    C_OK=$'\e[32m'; C_WARN=$'\e[33m'; C_ERR=$'\e[31m'; C_DIM=$'\e[2m'; C_BOLD=$'\e[1m'; C_RESET=$'\e[0m'
+else
+    C_OK=""; C_WARN=""; C_ERR=""; C_DIM=""; C_BOLD=""; C_RESET=""
+fi
+
+# ─── Auto-snap (default behavior; --no-snap to skip) ─────────────────
+# Best-effort: if mesh-snap is missing or fails, we still render whatever
+# is on disk. Quiet mode unless verbose env set.
+maybe_auto_snap() {
+    (( NO_SNAP )) && return 0
+    local snap_bin=""
+    if [[ -x "$HERE/mesh-snap" ]]; then
+        snap_bin="$HERE/mesh-snap"
+    elif command -v mesh-snap >/dev/null 2>&1; then
+        snap_bin="$(command -v mesh-snap)"
+    fi
+    if [[ -n "$snap_bin" ]]; then
+        "$snap_bin" --quiet 2>/dev/null || true
+    fi
+}
+
+# ─── Snapshot loading ────────────────────────────────────────────────
+# Returns a JSON object keyed by alias: { "ultron": {...}, "mac": {...} }.
+# Corrupt snapshots are dropped with a warn.
+load_snapshots() {
+    if [[ ! -d "$MESH_SYNC_DIR" ]]; then
+        echo '{}'
+        return 0
+    fi
+
+    local agg='{}'
+    local f
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        # Validate as JSON before merging — corrupt snapshot from a partially
+        # synced peer must not break rendering.
+        if ! jq -e . <"$f" >/dev/null 2>&1; then
+            warn "snapshot $f is not valid JSON; skipping"
+            continue
+        fi
+        # Use the file's basename (sans .json) as the alias key — falls
+        # back if the JSON's host.alias is missing.
+        local fname alias_in
+        fname="$(basename "$f" .json)"
+        alias_in="$(jq -r '.host.alias // empty' <"$f" 2>/dev/null)"
+        local key="${alias_in:-$fname}"
+        agg="$(jq --arg k "$key" --slurpfile s "$f" '. + {($k): $s[0]}' <<<"$agg")"
+    done < <(find "$MESH_SYNC_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null | sort)
+
+    echo "$agg"
+}
+
+# ─── Time math helpers (epoch math in pure jq when possible) ─────────
+_now_epoch() { date -u +%s; }
+
+# Pretty-print "X ago" given a UTC ISO-8601 timestamp. Empty input → "?".
+_age() {
+    local iso="${1:-}"
+    [[ -z "$iso" || "$iso" == "null" ]] && { echo "?"; return; }
+    local then_e now diff
+    # macOS date -j -f, GNU date -d. Try GNU first.
+    then_e="$(date -u -d "$iso" +%s 2>/dev/null || \
+              date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null || echo '')"
+    if [[ -z "$then_e" ]]; then
+        echo "?"
+        return
+    fi
+    now="$(_now_epoch)"
+    diff=$(( now - then_e ))
+    (( diff < 0 )) && diff=0
+    if   (( diff < 60 ));    then printf '%ds' "$diff"
+    elif (( diff < 3600 ));  then printf '%dm' "$((diff/60))"
+    elif (( diff < 86400 )); then printf '%dh' "$((diff/3600))"
+    else                          printf '%dd' "$((diff/86400))"
+    fi
+}
+
+# ─── Mesh consensus ──────────────────────────────────────────────────
+# Given the agg JSON (keyed by alias), for a given repo name, returns
+# "<sha>\t<alias>\t<last_fetched_at>" of the host with the freshest fetch
+# of that repo, or empty if no host has it.
+_consensus_for_repo() {
+    local agg="$1" repo="$2"
+    echo "$agg" | jq -r --arg repo "$repo" '
+        [ to_entries[]
+          | select(.value.repos[$repo].present == true and (.value.repos[$repo].last_fetched_at // null) != null and (.value.repos[$repo].origin_main_sha // null) != null)
+          | {
+                alias: .key,
+                sha:   .value.repos[$repo].origin_main_sha,
+                at:    .value.repos[$repo].last_fetched_at
+            }
+        ]
+        | sort_by(.at)
+        | reverse
+        | .[0] // empty
+        | "\(.sha)\t\(.alias)\t\(.at)"
+    '
+}
+
+# Status of a single (host, repo) cell vs consensus. Echoes the marker:
+#   "✓"  on consensus (head_sha == consensus sha)
+#   "↓N" behind by N
+#   "↑N" ahead by N
+#   "≠"  diverged
+#   "?"  consensus undefined
+#   "—"  not cloned
+# Output also includes a color hint: "<marker>\t<color_class>".
+_cell_status() {
+    local agg="$1" host="$2" repo="$3" consensus_sha="$4"
+    echo "$agg" | jq -r \
+        --arg host "$host" --arg repo "$repo" --arg csha "$consensus_sha" '
+        (.[$host].repos[$repo] // {}) as $r |
+        if ($r.present // false) == false then "—\tdim"
+        elif $csha == "" then "?\twarn"
+        elif $r.head_sha == $csha then "✓\tok"
+        elif ($r.behind // 0) > 0 then "↓\(.[$host].repos[$repo].behind)\twarn"
+        elif ($r.ahead  // 0) > 0 then "↑\(.[$host].repos[$repo].ahead)\twarn"
+        else "≠\terr"
+        end
+    '
+}
+
+# Helper used by render_overview / render_write — list of host aliases
+# as a newline-separated stream (sorted alphabetically with stable order).
+_host_aliases() {
+    local agg="$1"
+    echo "$agg" | jq -r 'keys[]'
+}
+
+# ─── Overview rendering ──────────────────────────────────────────────
+render_overview() {
+    local agg="$1"
+
+    if [[ "$agg" == "{}" ]]; then
+        echo "${C_DIM}mesh-status — no snapshots found in $MESH_SYNC_DIR${C_RESET}"
+        echo
+        echo "Run \`mesh-snap\` to create one, or share the Syncthing folder with a peer host."
+        return 0
+    fi
+
+    # Resolve list of hosts in stable order.
+    local hosts=()
+    local h
+    while IFS= read -r h; do
+        [[ -n "$h" ]] && hosts+=("$h")
+    done < <(_host_aliases "$agg")
+
+    # Header.
+    printf '%smesh-status%s — %s\n' "$C_BOLD" "$C_RESET" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo
+
+    # Compute consensus for each repo once (used in both header + status).
+    local repo
+    local repo_consensus_shas=()
+    local repo_consensus_aliases=()
+    local repo_consensus_ats=()
+    for repo in "${MESH_REPOS[@]}"; do
+        local cons sha cs_alias cs_at
+        cons="$(_consensus_for_repo "$agg" "$repo")"
+        sha="$(echo "$cons" | awk -F'\t' '{print $1}')"
+        cs_alias="$(echo "$cons" | awk -F'\t' '{print $2}')"
+        cs_at="$(echo "$cons" | awk -F'\t' '{print $3}')"
+        repo_consensus_shas+=("$sha")
+        repo_consensus_aliases+=("$cs_alias")
+        repo_consensus_ats+=("$cs_at")
+    done
+
+    # Column widths. 18 char first column ("repo / drift / advisories")
+    # + 18 per host. Bash 3.2 — manual padding.
+    local col_w=18
+
+    # Header row: "repo" | hosts...
+    printf '%-*s' "$col_w" "repo"
+    for h in "${hosts[@]}"; do
+        printf ' %-*s' "$col_w" "$h"
+    done
+    printf '\n'
+
+    # Sub-header: OS info
+    printf '%-*s' "$col_w" ""
+    for h in "${hosts[@]}"; do
+        local os_pretty
+        os_pretty="$(echo "$agg" | jq -r --arg h "$h" '
+            (.[$h].host // {}) as $o |
+            (
+              ($o.os_release // "?") +
+              (if ($o.wsl // false) then " · WSL" else "" end)
+            )')"
+        # Truncate to column width.
+        os_pretty="${os_pretty:0:$col_w}"
+        printf ' %-*s' "$col_w" "$os_pretty"
+    done
+    printf '\n'
+
+    # Sub-header: snapshot age
+    printf '%-*s' "$col_w" ""
+    for h in "${hosts[@]}"; do
+        local cap age
+        cap="$(echo "$agg" | jq -r --arg h "$h" '.[$h].captured_at // ""')"
+        age="$(_age "$cap")"
+        printf ' %-*s' "$col_w" "snapshot: $age"
+    done
+    printf '\n'
+
+    printf '%s%s%s\n' "$C_DIM" \
+        "$(printf '%*s' $(( col_w + (col_w + 1) * ${#hosts[@]} )) '' | tr ' ' '─')" \
+        "$C_RESET"
+
+    # Repo rows.
+    local i
+    for (( i=0; i<${#MESH_REPOS[@]}; i++ )); do
+        repo="${MESH_REPOS[$i]}"
+        local consensus_sha="${repo_consensus_shas[$i]}"
+        printf '%s%-*s%s' "$C_BOLD" "$col_w" "$repo" "$C_RESET"
+        for h in "${hosts[@]}"; do
+            local cell color marker rest
+            rest="$(_cell_status "$agg" "$h" "$repo" "$consensus_sha")"
+            marker="$(echo "$rest" | awk -F'\t' '{print $1}')"
+            color="$(echo "$rest" | awk -F'\t' '{print $2}')"
+            local short
+            short="$(echo "$agg" | jq -r --arg h "$h" --arg r "$repo" '.[$h].repos[$r].head_short // ""')"
+            local cell_text="${marker} ${short:-—}"
+            local color_code=""
+            case "$color" in
+                ok)   color_code="$C_OK" ;;
+                warn) color_code="$C_WARN" ;;
+                err)  color_code="$C_ERR" ;;
+                dim)  color_code="$C_DIM" ;;
+            esac
+            cell="${color_code}${cell_text}${C_RESET}"
+            # Pad without ANSI counted toward width — use printf with the
+            # raw text first, then re-emit colored.
+            local plain="$cell_text"
+            local pad=$(( col_w - ${#plain} ))
+            (( pad < 0 )) && pad=0
+            printf ' %s%*s' "$cell" "$pad" ""
+        done
+        printf '\n'
+    done
+
+    echo
+
+    # Drift + advisories rows.
+    printf '%-*s' "$col_w" "drift"
+    for h in "${hosts[@]}"; do
+        local dc
+        dc="$(echo "$agg" | jq -r --arg h "$h" '
+            if .[$h].drift == null then "?"
+            else (.[$h].drift.drift_count // 0) + (.[$h].drift.missing_count // 0) + (.[$h].drift.marker_absent_count // 0) | tostring
+            end')"
+        local color=""
+        case "$dc" in
+            0)   color="$C_OK"   ;;
+            1|2) color="$C_WARN" ;;
+            ?)   color="$C_DIM"  ;;
+            *)   color="$C_ERR"  ;;
+        esac
+        local cell="${color}${dc}${C_RESET}"
+        local pad=$(( col_w - ${#dc} ))
+        (( pad < 0 )) && pad=0
+        printf ' %s%*s' "$cell" "$pad" ""
+    done
+    printf '\n'
+
+    printf '%-*s' "$col_w" "advisories"
+    for h in "${hosts[@]}"; do
+        local ac
+        ac="$(echo "$agg" | jq -r --arg h "$h" '.[$h].advisories.count // 0 | tostring')"
+        local color=""
+        case "$ac" in
+            0)   color="$C_OK"   ;;
+            1|2) color="$C_WARN" ;;
+            *)   color="$C_ERR"  ;;
+        esac
+        local cell="${color}${ac}${C_RESET}"
+        local pad=$(( col_w - ${#ac} ))
+        (( pad < 0 )) && pad=0
+        printf ' %s%*s' "$cell" "$pad" ""
+    done
+    printf '\n'
+
+    echo
+    echo "${C_BOLD}Mesh consensus (origin/$MESH_REFERENCE_BRANCH)${C_RESET}"
+    for (( i=0; i<${#MESH_REPOS[@]}; i++ )); do
+        repo="${MESH_REPOS[$i]}"
+        local sha="${repo_consensus_shas[$i]}"
+        local cs_alias="${repo_consensus_aliases[$i]}"
+        local cs_at="${repo_consensus_ats[$i]}"
+        if [[ -z "$sha" ]]; then
+            printf '  %-20s %sno host fetched%s\n' "$repo" "$C_DIM" "$C_RESET"
+        else
+            printf '  %-20s %s · fetched %s ago via %s\n' \
+                "$repo" "${sha:0:7}" "$(_age "$cs_at")" "$cs_alias"
+        fi
+    done
+
+    echo
+    echo "${C_DIM}Legend: ✓ on latest origin/main · ↓N behind · ↑N ahead · ≠ diverged · — not cloned · ? consensus undefined${C_RESET}"
+}
+
+# ─── Cross-host Tailscale consensus (spec §6.3) ─────────────────────
+# For a given target host, scans every OTHER host's tailscale peer list
+# and reports what they currently see about the target. This is the
+# "view from outside" — useful when target's own snapshot is stale but
+# peers (with fresher snapshots) still hold authoritative tailnet state
+# from their daemons.
+#
+# Format:
+#   per ultron:    ⚠ offline   last seen 2d ago (2026-04-29T08:14Z)
+#   per mac:       ⚠ offline   last seen 2d ago (...)
+#   → conclusion:  all peers report crc offline
+#
+# Skipped silently when there are no other hosts in the mesh.
+_render_tailscale_consensus_about() {
+    local agg="$1"
+    local target="$2"
+
+    # Tab-separated rows: <other_alias>\t<state>\t<last_seen>\t<key_expired>
+    # state ∈ {true, false, no_visibility, ts_not_running, ts_not_installed}
+    local entries
+    entries="$(echo "$agg" | jq -r --arg t "$target" '
+        to_entries[]
+        | select(.key != $t)
+        | .key as $other
+        | (.value.network.tailscale // null) as $ts
+        | if $ts == null then "\($other)\tts_not_installed\t\t"
+          elif ($ts.installed // false) == false then "\($other)\tts_not_installed\t\t"
+          elif ($ts.up // false) == false then "\($other)\tts_not_running\t\t"
+          else
+            (($ts.peers // []) | map(select(.alias == $t or .tailnet_name == $t)) | first) as $p
+            | if $p == null then "\($other)\tno_visibility\t\t"
+              else "\($other)\t\($p.online // false)\t\($p.last_seen // "")\t\($p.key_expired // false)"
+              end
+          end
+    ' 2>/dev/null)"
+
+    [[ -z "$entries" ]] && return 0
+
+    printf '%sTailscale%s (consensus from OTHER hosts NOW about %s)\n' \
+        "$C_BOLD" "$C_RESET" "$target"
+
+    local online_count=0 offline_count=0 missing_count=0
+    local other state last_seen expired age
+    while IFS=$'\t' read -r other state last_seen expired; do
+        [[ -z "$other" ]] && continue
+        case "$state" in
+            true)
+                printf '  per %-12s %s✓ online%s   last seen %s\n' \
+                    "$other:" "$C_OK" "$C_RESET" "${last_seen:-now}"
+                online_count=$((online_count + 1))
+                [[ "$expired" == "true" ]] && printf '                ${C_WARN}⚠ key expired per %s%s\n' "$other" "$C_RESET"
+                ;;
+            false)
+                age="$(_age "$last_seen")"
+                printf '  per %-12s %s⚠ offline%s  last seen %s ago (%s)\n' \
+                    "$other:" "$C_WARN" "$C_RESET" "$age" "${last_seen:-?}"
+                offline_count=$((offline_count + 1))
+                [[ "$expired" == "true" ]] && printf '                %s⚠ key expired per %s%s\n' "$C_WARN" "$other" "$C_RESET"
+                ;;
+            no_visibility)
+                printf "  per %-12s %sno visibility%s (target not in %s's peer list)\n" \
+                    "$other:" "$C_DIM" "$C_RESET" "$other"
+                missing_count=$((missing_count + 1))
+                ;;
+            ts_not_running)
+                printf '  per %-12s %stailscale not running%s on %s\n' \
+                    "$other:" "$C_DIM" "$C_RESET" "$other"
+                missing_count=$((missing_count + 1))
+                ;;
+            ts_not_installed|*)
+                printf '  per %-12s %stailscale not installed%s on %s\n' \
+                    "$other:" "$C_DIM" "$C_RESET" "$other"
+                missing_count=$((missing_count + 1))
+                ;;
+        esac
+    done <<< "$entries"
+
+    local total=$((online_count + offline_count))
+    if (( total == 0 )); then
+        printf '  %s→ conclusion:%s no consensus available (no other host can see %s)\n' \
+            "$C_DIM" "$C_RESET" "$target"
+    elif (( offline_count == 0 )); then
+        if (( missing_count > 0 )); then
+            printf '  → conclusion:  all reporting peers see %s online (%d host(s) lack visibility)\n' \
+                "$target" "$missing_count"
+        else
+            printf '  → conclusion:  all peers see %s online\n' "$target"
+        fi
+    elif (( online_count == 0 )); then
+        printf '  → conclusion:  all peers report %s offline\n' "$target"
+    else
+        printf '  → conclusion:  asymmetric — %d host(s) see online, %d see offline\n' \
+            "$online_count" "$offline_count"
+    fi
+    echo
+}
+
+# ─── Detail rendering ────────────────────────────────────────────────
+# Drill-down on a single host. Shows host meta, snapshot freshness,
+# tailscale block (when present), per-repo state with mesh consensus
+# comparison, drift items (only if non-empty), advisories items.
+render_detail() {
+    local agg="$1"
+    local host="$DETAIL_ALIAS"
+
+    # Host existence check — clearer error than empty output.
+    if ! echo "$agg" | jq -e --arg h "$host" 'has($h)' >/dev/null 2>&1; then
+        err "host alias '$host' not found in $MESH_SYNC_DIR"
+        echo "Available hosts:" >&2
+        echo "$agg" | jq -r 'keys[] | "  - " + .' >&2
+        return 1
+    fi
+
+    local snap
+    snap="$(echo "$agg" | jq --arg h "$host" '.[$h]')"
+
+    # Header with host meta.
+    local hostname os_release arch wsl cap age
+    hostname="$(echo "$snap" | jq -r '.host.hostname // "?"')"
+    os_release="$(echo "$snap" | jq -r '.host.os_release // "?"')"
+    arch="$(echo "$snap"     | jq -r '.host.arch // "?"')"
+    wsl="$(echo "$snap"      | jq -r 'if (.host.wsl // false) then " (WSL2)" else "" end')"
+    cap="$(echo "$snap"      | jq -r '.captured_at // ""')"
+    age="$(_age "$cap")"
+
+    printf '%s═══════════════════════════════════════════════════════════════════%s\n' "$C_DIM" "$C_RESET"
+    printf '%sHost: %s%s  (alias)%s\n' "$C_BOLD" "$host" "$C_RESET" ""
+    printf '  hostname:   %s\n' "$hostname"
+    printf '  os:         %s%s\n' "$os_release" "$wsl"
+    printf '  arch:       %s\n' "$arch"
+    echo
+    printf '  %ssnapshot freshness%s: %s ago (captured %s)\n' "$C_BOLD" "$C_RESET" "$age" "$cap"
+    printf '%s═══════════════════════════════════════════════════════════════════%s\n' "$C_DIM" "$C_RESET"
+    echo
+
+    # Tailscale block.
+    if echo "$snap" | jq -e '.network.tailscale.installed == true' >/dev/null 2>&1; then
+        local up auth_status ts_ver self_ip self_dns
+        up="$(echo "$snap" | jq -r '.network.tailscale.up // false')"
+        auth_status="$(echo "$snap" | jq -r '.network.tailscale.auth_status // "?"')"
+        ts_ver="$(echo "$snap"     | jq -r '.network.tailscale.version // ""')"
+        self_ip="$(echo "$snap"    | jq -r '.network.tailscale.self.ip // ""')"
+        self_dns="$(echo "$snap"   | jq -r '.network.tailscale.self.magicdns // ""')"
+        printf '%sTailscale%s (as %s reported in last snapshot, %s ago)\n' \
+            "$C_BOLD" "$C_RESET" "$host" "$age"
+        if [[ "$up" == "true" ]]; then
+            printf '  status:     %s✓ up%s · v%s · %s\n' "$C_OK" "$C_RESET" "$ts_ver" "$auth_status"
+        else
+            printf '  status:     %s⚠ down%s · %s\n' "$C_WARN" "$C_RESET" "$auth_status"
+        fi
+        [[ -n "$self_ip"  ]] && printf '  self IP:    %s\n' "$self_ip"
+        [[ -n "$self_dns" ]] && printf '  MagicDNS:   %s\n' "$self_dns"
+
+        # Peers block — only if there are any.
+        if echo "$snap" | jq -e '.network.tailscale.peers | length > 0' >/dev/null 2>&1; then
+            echo "  peers:"
+            echo "$snap" | jq -r '
+                .network.tailscale.peers
+                | map("    " +
+                      (if (.online // false) then "✓ online " else "⚠ offline" end) + "  " +
+                      ((.alias // .tailnet_name // "?") | .[0:18]) +
+                      "  ip=" + (.ip // "?") +
+                      "  last_seen=" + (.last_seen // "?") +
+                      (if (.key_expired // false) then "  ⚠ key expired" else "" end))
+                | .[]'
+        fi
+        echo
+    fi
+
+    # Cross-host Tailscale consensus block (spec §6.3).
+    # Renders even when target's own tailscale isn't installed/up — peers
+    # may still hold authoritative state from their tailnet daemons.
+    _render_tailscale_consensus_about "$agg" "$host"
+
+    # Repos block.
+    printf '%sRepos%s\n' "$C_BOLD" "$C_RESET"
+    local repo
+    for repo in "${MESH_REPOS[@]}"; do
+        local cell present head_short tag branch ahead behind dirty
+        local origin_sha last_fetched_at last_applied_sha last_applied_at
+        present="$(echo "$snap"          | jq -r --arg r "$repo" '.repos[$r].present // false')"
+        if [[ "$present" != "true" ]]; then
+            printf '  %-20s %snot cloned%s\n' "$repo" "$C_DIM" "$C_RESET"
+            continue
+        fi
+        head_short="$(echo "$snap"       | jq -r --arg r "$repo" '.repos[$r].head_short // "?"')"
+        tag="$(echo "$snap"              | jq -r --arg r "$repo" '.repos[$r].tag_describe // ""')"
+        branch="$(echo "$snap"           | jq -r --arg r "$repo" '.repos[$r].branch // "?"')"
+        ahead="$(echo "$snap"            | jq -r --arg r "$repo" '.repos[$r].ahead // 0')"
+        behind="$(echo "$snap"           | jq -r --arg r "$repo" '.repos[$r].behind // 0')"
+        dirty="$(echo "$snap"            | jq -r --arg r "$repo" '.repos[$r].dirty // false')"
+        origin_sha="$(echo "$snap"       | jq -r --arg r "$repo" '.repos[$r].origin_main_sha // ""')"
+        last_fetched_at="$(echo "$snap"  | jq -r --arg r "$repo" '.repos[$r].last_fetched_at // ""')"
+        last_applied_sha="$(echo "$snap" | jq -r --arg r "$repo" '.repos[$r].last_applied.sha // ""')"
+        last_applied_at="$(echo "$snap"  | jq -r --arg r "$repo" '.repos[$r].last_applied.at // ""')"
+
+        # Mesh consensus across all hosts.
+        local cons sha cs_alias cs_at
+        cons="$(_consensus_for_repo "$agg" "$repo")"
+        sha="$(echo "$cons" | awk -F'\t' '{print $1}')"
+        cs_alias="$(echo "$cons" | awk -F'\t' '{print $2}')"
+        cs_at="$(echo "$cons" | awk -F'\t' '{print $3}')"
+
+        # Marker (vs consensus).
+        local rest marker color
+        rest="$(_cell_status "$agg" "$host" "$repo" "$sha")"
+        marker="$(echo "$rest" | awk -F'\t' '{print $1}')"
+        color="$(echo "$rest"  | awk -F'\t' '{print $2}')"
+        local color_code=""
+        case "$color" in
+            ok)   color_code="$C_OK"   ;;
+            warn) color_code="$C_WARN" ;;
+            err)  color_code="$C_ERR"  ;;
+            dim)  color_code="$C_DIM"  ;;
+        esac
+
+        local dirty_marker=""
+        [[ "$dirty" == "true" ]] && dirty_marker=" ${C_WARN}★ dirty${C_RESET}"
+
+        printf '\n  %s%s%s' "$C_BOLD" "$repo" "$C_RESET"
+        printf '  %s%s%s\n' "$color_code" "$marker" "$C_RESET"
+        printf '    branch:        %s\n' "$branch"
+        printf '    head:          %s' "$head_short"
+        [[ -n "$tag" ]] && printf ' (%s)' "$tag"
+        printf '%s\n' "$dirty_marker"
+        printf '    ahead/behind:  %s/%s vs origin/%s\n' "$ahead" "$behind" "$MESH_REFERENCE_BRANCH"
+        cell="$(_age "$last_fetched_at")"
+        printf '    fetch state:   ran %s ago (%s)\n' "$cell" "${last_fetched_at:-?}"
+        printf '    origin/main:   %s%s\n' "${origin_sha:0:7}" "$([[ -z "$origin_sha" ]] && echo "(none)" || echo "")"
+        if [[ -z "$sha" ]]; then
+            printf '    consensus:     %sno host fetched%s\n' "$C_DIM" "$C_RESET"
+        elif [[ "$sha" == "$origin_sha" ]]; then
+            printf '    consensus:     %s · same SHA · fetched %s ago via %s\n' "${sha:0:7}" "$(_age "$cs_at")" "$cs_alias"
+        else
+            printf '    consensus:     %s · DIFFERS · fetched %s ago via %s\n' "${sha:0:7}" "$(_age "$cs_at")" "$cs_alias"
+        fi
+        if [[ -n "$last_applied_sha" ]]; then
+            printf '    last applied:  %s at %s (%s ago)\n' "${last_applied_sha:0:7}" "$last_applied_at" "$(_age "$last_applied_at")"
+        else
+            printf '    last applied:  %s(none)%s\n' "$C_DIM" "$C_RESET"
+        fi
+    done
+    echo
+
+    # Drift items (only if non-empty per spec §6.3).
+    local drift_count
+    drift_count="$(echo "$snap" | jq -r '
+        if .drift == null then 0
+        else (.drift.drift_count // 0) + (.drift.missing_count // 0) + (.drift.marker_absent_count // 0)
+        end')"
+    if [[ -n "$drift_count" && "$drift_count" != "0" ]]; then
+        printf '%sDrift (doctor.sh, %s items)%s\n' "$C_BOLD" "$drift_count" "$C_RESET"
+        echo "$snap" | jq -r '
+            (.drift.items // []) | .[]
+            | "  " + (.kind // "?") + "  " + (.path // "?") + (if .detail then "  (" + .detail + ")" else "" end)'
+        echo
+    fi
+
+    # Advisories.
+    local adv_count
+    adv_count="$(echo "$snap" | jq -r '.advisories.count // 0')"
+    if [[ -n "$adv_count" && "$adv_count" != "0" ]]; then
+        printf '%sAdvisories (%s pending)%s\n' "$C_BOLD" "$adv_count" "$C_RESET"
+        echo "$snap" | jq -r '
+            (.advisories.items // []) | .[]
+            | "  " + (.kind // "?") + "  " + (.severity // "?") + (if .since then "  since " + .since else "" end)'
+        echo
+    fi
+
+    printf '%s═══════════════════════════════════════════════════════════════════%s\n' "$C_DIM" "$C_RESET"
+}
+
+# ─── --write: markdown surgery ───────────────────────────────────────
+# Builds the markdown payload (table) and rewrites the section between
+# <!-- mesh-status:start --> and <!-- mesh-status:end --> markers in the
+# target file (default: $HOME/dotfiles/.ai/memory/PROJECT_STATUS.md;
+# overridable via --target). Idempotent: re-running with the same data
+# produces the same file. Markers must already exist or we fail loud
+# per spec §6.4.
+_default_write_target() {
+    # Look for the file relative to the dotfiles checkout.
+    local candidates=(
+        "$HOME/dotfiles/.ai/memory/PROJECT_STATUS.md"
+        "$(cd "$HERE/.." 2>/dev/null && pwd)/.ai/memory/PROJECT_STATUS.md"
+    )
+    local c
+    for c in "${candidates[@]}"; do
+        [[ -n "$c" && -f "$c" ]] && { echo "$c"; return 0; }
+    done
+    # Fall back to the first candidate even if it doesn't exist — error
+    # path will surface.
+    echo "${candidates[0]}"
+}
+
+_build_md_payload() {
+    local agg="$1"
+    local hosts=()
+    local h
+    while IFS= read -r h; do
+        [[ -n "$h" ]] && hosts+=("$h")
+    done < <(_host_aliases "$agg")
+
+    if (( ${#hosts[@]} == 0 )); then
+        printf '\n_No mesh snapshots available._\n'
+        return 0
+    fi
+
+    # Compute consensus per repo (used for the "Mesh latest" column).
+    local repo
+    local cs_shas=() cs_aliases=() cs_ats=()
+    for repo in "${MESH_REPOS[@]}"; do
+        local cons
+        cons="$(_consensus_for_repo "$agg" "$repo")"
+        cs_shas+=("$(echo "$cons" | awk -F'\t' '{print $1}')")
+        cs_aliases+=("$(echo "$cons" | awk -F'\t' '{print $2}')")
+        cs_ats+=("$(echo "$cons" | awk -F'\t' '{print $3}')")
+    done
+
+    # Header block.
+    printf '\n> **Mesh snapshot** — captured %s. Run `mesh-status` for the live view, `mesh-status --detail <alias>` for per-host drill-down.\n\n' \
+        "$(date -u +%Y-%m-%dT%H:%MZ)"
+
+    # Table header.
+    printf '| Repo |'
+    for h in "${hosts[@]}"; do
+        printf ' %s |' "$h"
+    done
+    printf ' Mesh latest |\n'
+
+    # NOTE: leading "---" is parsed as a flag by some printf implementations.
+    # Use `printf '%s'` so the data passes as an argument, not a format.
+    printf '%s' '|---|'
+    local _h
+    for _h in "${hosts[@]}"; do
+        printf '%s' '---|'
+    done
+    printf '%s\n' '---|'
+
+    # Repo rows.
+    local i
+    for (( i=0; i<${#MESH_REPOS[@]}; i++ )); do
+        repo="${MESH_REPOS[$i]}"
+        local sha="${cs_shas[$i]}"
+        local cs_alias="${cs_aliases[$i]}"
+        local cs_at="${cs_ats[$i]}"
+        printf '| **%s** |' "$repo"
+        for h in "${hosts[@]}"; do
+            local present head_short ahead behind dirty applied_age
+            present="$(echo "$agg" | jq -r --arg h "$h" --arg r "$repo" '.[$h].repos[$r].present // false')"
+            if [[ "$present" != "true" ]]; then
+                printf ' — |'
+                continue
+            fi
+            head_short="$(echo "$agg" | jq -r --arg h "$h" --arg r "$repo" '.[$h].repos[$r].head_short // "?"')"
+            ahead="$(echo "$agg"      | jq -r --arg h "$h" --arg r "$repo" '.[$h].repos[$r].ahead // 0')"
+            behind="$(echo "$agg"     | jq -r --arg h "$h" --arg r "$repo" '.[$h].repos[$r].behind // 0')"
+            dirty="$(echo "$agg"      | jq -r --arg h "$h" --arg r "$repo" '.[$h].repos[$r].dirty // false')"
+            applied_age="$(_age "$(echo "$agg" | jq -r --arg h "$h" --arg r "$repo" '.[$h].repos[$r].last_applied.at // ""')")"
+
+            local marker=""
+            if [[ -z "$sha" ]]; then
+                marker='?'
+            elif [[ "$(echo "$agg" | jq -r --arg h "$h" --arg r "$repo" '.[$h].repos[$r].head_sha // ""')" == "$sha" ]]; then
+                marker='✓'
+            elif (( behind > 0 )); then
+                marker="↓$behind"
+            elif (( ahead > 0 )); then
+                marker="↑$ahead"
+            else
+                marker='≠'
+            fi
+            local star=""
+            [[ "$dirty" == "true" ]] && star=' ★'
+            printf ' %s `%s`%s · %s |' "$marker" "$head_short" "$star" "$applied_age"
+        done
+        if [[ -z "$sha" ]]; then
+            printf ' — |\n'
+        else
+            printf ' `%s` (via %s, %s ago) |\n' "${sha:0:7}" "$cs_alias" "$(_age "$cs_at")"
+        fi
+    done
+
+    # Drift / advisories / age summary rows.
+    printf '| Drift count |'
+    for h in "${hosts[@]}"; do
+        local dc
+        dc="$(echo "$agg" | jq -r --arg h "$h" '
+            if .[$h].drift == null then "?"
+            else (.[$h].drift.drift_count // 0) + (.[$h].drift.missing_count // 0) + (.[$h].drift.marker_absent_count // 0) | tostring
+            end')"
+        if [[ "$dc" == "0" || "$dc" == "?" ]]; then
+            printf ' %s |' "$dc"
+        else
+            printf ' **%s** |' "$dc"
+        fi
+    done
+    printf ' — |\n'
+
+    printf '| Advisory count |'
+    for h in "${hosts[@]}"; do
+        local ac
+        ac="$(echo "$agg" | jq -r --arg h "$h" '.[$h].advisories.count // 0 | tostring')"
+        if [[ "$ac" == "0" ]]; then
+            printf ' %s |' "$ac"
+        else
+            printf ' **%s** |' "$ac"
+        fi
+    done
+    printf ' — |\n'
+
+    printf '| Snapshot age |'
+    for h in "${hosts[@]}"; do
+        local cap age
+        cap="$(echo "$agg" | jq -r --arg h "$h" '.[$h].captured_at // ""')"
+        age="$(_age "$cap")"
+        printf ' %s |' "$age"
+    done
+    printf ' — |\n'
+
+    printf '\nLegend: `★` dirty · `↑N` ahead · `↓N` behind · `—` not cloned · `?` unknown\n\n'
+}
+
+# Replace content between markers in $1, with payload from stdin.
+# awk implementation per spec §6.4 — single-pass, tmp-in-same-dir + mv,
+# preserves whitespace outside the markers.
+_md_replace_block() {
+    local file="$1"
+    local payload_file="$2"
+    local tmp
+    tmp="$(mktemp "$(dirname "$file")/.mesh-status.md.XXXXXX")"
+    awk -v payload_file="$payload_file" '
+        BEGIN {
+            payload = ""
+            while ((getline line < payload_file) > 0) {
+                payload = payload (payload == "" ? "" : "\n") line
+            }
+            close(payload_file)
+        }
+        /<!-- mesh-status:start/ {
+            print
+            print payload
+            in_block = 1
+            next
+        }
+        /<!-- mesh-status:end -->/ {
+            in_block = 0
+            print
+            next
+        }
+        ! in_block { print }
+    ' "$file" > "$tmp"
+    mv "$tmp" "$file"
+}
+
+render_write() {
+    local agg="$1"
+    local target="${WRITE_TARGET:-$(_default_write_target)}"
+
+    if [[ ! -f "$target" ]]; then
+        err "--write target not found: $target"
+        return 1
+    fi
+
+    if ! grep -q '<!-- mesh-status:start' "$target" 2>/dev/null; then
+        err "markers absent in $target"
+        echo "Add manually:" >&2
+        echo "  <!-- mesh-status:start - auto-generated by mesh-status --write; DO NOT EDIT BETWEEN MARKERS -->" >&2
+        echo "  <!-- mesh-status:end -->" >&2
+        return 1
+    fi
+
+    local payload_file
+    payload_file="$(mktemp)"
+    _build_md_payload "$agg" > "$payload_file"
+    _md_replace_block "$target" "$payload_file"
+    rm -f "$payload_file"
+    echo "${C_OK}✓${C_RESET} wrote $target" >&2
+}
+
+# --gc: drop snapshots whose captured_at is older than $GC_DAYS days.
+# Reads each snapshot's captured_at field (so it's content-driven, not
+# mtime-driven — works even if the file was rsynced and mtime got
+# updated). Files with unparseable timestamps are left in place.
+render_gc() {
+    if [[ ! -d "$MESH_SYNC_DIR" ]]; then
+        warn "$MESH_SYNC_DIR does not exist; nothing to do"
+        return 0
+    fi
+    local cutoff_epoch now_epoch
+    now_epoch="$(_now_epoch)"
+    cutoff_epoch=$(( now_epoch - GC_DAYS * 86400 ))
+
+    local removed=0 kept=0
+    local f
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        local cap then_e
+        cap="$(jq -r '.captured_at // ""' <"$f" 2>/dev/null)"
+        if [[ -z "$cap" ]]; then
+            kept=$((kept+1))
+            continue
+        fi
+        then_e="$(date -u -d "$cap" +%s 2>/dev/null || \
+                  date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$cap" +%s 2>/dev/null || echo '')"
+        if [[ -z "$then_e" ]]; then
+            kept=$((kept+1))
+            continue
+        fi
+        if (( then_e < cutoff_epoch )); then
+            rm -f "$f"
+            removed=$((removed+1))
+            echo "${C_DIM}removed:${C_RESET} $f (captured $cap)" >&2
+        else
+            kept=$((kept+1))
+        fi
+    done < <(find "$MESH_SYNC_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null | sort)
+
+    echo "${C_OK}✓${C_RESET} gc done — removed $removed, kept $kept (threshold ${GC_DAYS}d)" >&2
+}
+
+# --refresh: opt-in cross-mesh trigger via SSH.
+# Strategy (spec §6.6):
+#   1. From the current sync-dir snapshots, list peers that this host
+#      considers "online" via Tailscale (peers with online: true).
+#   2. For each peer, fork a non-blocking ssh / tssh that runs
+#      `mesh-snap --quiet` with a per-peer timeout.
+#   3. Wait briefly for Syncthing to replicate the new snapshots, then
+#      trigger another local refresh (re-read happens in main).
+# This function reports per-peer progress on stderr; the caller is
+# expected to re-read AGG after this finishes.
+render_refresh() {
+    local agg="$1"
+    if [[ "$agg" == "{}" ]]; then
+        warn "no snapshots loaded — refresh has no peer list to consult"
+        return 0
+    fi
+
+    # Discover the local alias so we don't ssh to ourselves.
+    local self_alias
+    self_alias="${MESH_HOST_ALIAS:-$(hostname -s 2>/dev/null || echo unknown)}"
+
+    # Build list of peers that are online from the local POV. We trust the
+    # local snapshot's tailscale block since `mesh-status --refresh` is
+    # opt-in and a few seconds stale is fine.
+    local peers
+    peers="$(echo "$agg" | jq -r --arg self "$self_alias" '
+        (.[$self].network.tailscale.peers // [])
+        | map(select(.online == true and .alias != null))
+        | map(.alias)
+        | .[]
+    ' 2>/dev/null | sort -u)"
+
+    if [[ -z "$peers" ]]; then
+        warn "no online peers in local Tailscale view — nothing to refresh"
+        return 0
+    fi
+
+    # Choose ssh wrapper. Prefer `tssh` (Tailscale shorthand) when available,
+    # fall back to `ssh`.
+    local ssh_bin="ssh"
+    if command -v tssh >/dev/null 2>&1; then
+        ssh_bin="tssh"
+    fi
+
+    # Per-peer timeout (seconds). Total wait bounded by `wait` below.
+    local per_peer_timeout="${MESH_REFRESH_TIMEOUT:-3}"
+    local timeout_bin=""
+    if command -v timeout >/dev/null 2>&1; then
+        timeout_bin="timeout"
+    elif command -v gtimeout >/dev/null 2>&1; then
+        timeout_bin="gtimeout"
+    fi
+
+    local p pids=()
+    for p in $peers; do
+        [[ "$p" == "$self_alias" ]] && continue
+        echo "${C_DIM}refresh:${C_RESET} triggering mesh-snap on $p via $ssh_bin" >&2
+        if [[ -n "$timeout_bin" ]]; then
+            ( "$timeout_bin" "$per_peer_timeout" "$ssh_bin" "$p" \
+                'command -v mesh-snap >/dev/null 2>&1 && mesh-snap --quiet' \
+                >/dev/null 2>&1 ) &
+        else
+            ( "$ssh_bin" -o ConnectTimeout="$per_peer_timeout" "$p" \
+                'command -v mesh-snap >/dev/null 2>&1 && mesh-snap --quiet' \
+                >/dev/null 2>&1 ) &
+        fi
+        pids+=("$!")
+    done
+
+    # Wait for all peers to settle. Bash 3.2 has no `wait -n`; use a plain
+    # `wait` which blocks until ALL background jobs finish (each is
+    # individually timed-out, so total stays bounded).
+    local pid
+    for pid in "${pids[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
+
+    # Give Syncthing a moment to replicate the freshly written snapshots.
+    sleep 1
+    echo "${C_OK}✓${C_RESET} refresh complete (re-reading sync dir)" >&2
+}
+
+# ─── Main ────────────────────────────────────────────────────────────
+maybe_auto_snap
+
+AGG="$(load_snapshots)"
+
+# --refresh: opt-in SSH trigger across the mesh BEFORE rendering. Then
+# re-read the sync dir so the panel reflects the fresh snapshots.
+if (( REFRESH )); then
+    render_refresh "$AGG"
+    AGG="$(load_snapshots)"
+fi
+
+RC=0
+case "$MODE" in
+    overview) render_overview "$AGG" || RC=$? ;;
+    detail)   render_detail   "$AGG" || RC=$? ;;
+    write)    render_write    "$AGG" || RC=$? ;;
+    json)     echo "$AGG" | jq . || RC=$? ;;
+    gc)       render_gc            || RC=$? ;;
+esac
+
+: "$MESH_HISTORY_DIR" "$MESH_STATUS_VERSION" "$WRITE_TARGET" "$REFRESH"
+type warn >/dev/null 2>&1 || true
+
+exit "$RC"

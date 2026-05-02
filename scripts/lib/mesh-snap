@@ -1,0 +1,788 @@
+#!/usr/bin/env bash
+# scripts/mesh-snap — collector for mesh-status v1.
+#
+# Captures the local host's view of the dotfiles ecosystem (host metadata,
+# repo SHAs / fetch state, drift via doctor.sh, advisories, tailscale state)
+# and writes a JSON snapshot to $MESH_SYNC_DIR/<alias>.json so peer hosts can
+# read it via Syncthing replication. Also appends a timestamped copy under
+# $MESH_HISTORY_DIR for forensic audit (rotated by retention policy).
+#
+# Spec: docs/2026-05-01-mesh-status-spec.md
+#
+# Usage:
+#   mesh-snap                manual snapshot (writes files, prints OK)
+#   mesh-snap --quiet        suppress info output (used by hooks)
+#   mesh-snap --json         dump JSON to stdout, do not write files
+#   mesh-snap --no-history   skip audit history append
+#   mesh-snap --no-fetch     skip git fetch (offline; reuse last known refs)
+#   mesh-snap --config PATH  override config path
+#   mesh-snap --help         show this help
+#
+# Exit codes:
+#   0  success
+#   1  fatal (config missing, jq/git absent)
+#   2  partial success (collector failed; snapshot still written with errors)
+#
+# Design principles (spec §3.2):
+#   - Single-writer: this host only writes its own <alias>.json. Zero
+#     Syncthing conflict.
+#   - Fail-soft per collector: a failed collector emits null/error in the
+#     corresponding field; the snapshot is still written.
+#   - Atomic writes: tmp-in-same-dir + mv (POSIX rename(2)) — never partial
+#     reads by mesh-status during write.
+#   - Bash 3.2 compatible (macOS /bin/bash) — no associative arrays, no
+#     mapfile, no &>>. See .ai/memory/feedback_bash32_compat_macos.md.
+
+set -uo pipefail
+# NOTE: not -e — collectors must be allowed to fail without aborting the run.
+
+MESH_SNAP_VERSION="0.1.0"
+
+# ─── Args ────────────────────────────────────────────────────────────
+QUIET=0
+JSON_STDOUT=0
+NO_HISTORY=0
+NO_FETCH=0
+CONFIG_OVERRIDE=""
+
+while (( $# > 0 )); do
+    case "$1" in
+        --quiet|-q)    QUIET=1 ;;
+        --json)        JSON_STDOUT=1 ;;
+        --no-history)  NO_HISTORY=1 ;;
+        --no-fetch)    NO_FETCH=1 ;;
+        --config)
+            shift
+            CONFIG_OVERRIDE="${1:-}"
+            if [[ -z "$CONFIG_OVERRIDE" || "$CONFIG_OVERRIDE" == --* ]]; then
+                echo "mesh-snap: --config requires a path" >&2
+                exit 1
+            fi
+            ;;
+        --help|-h)
+            sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *)
+            echo "mesh-snap: unknown arg: $1" >&2
+            echo "Try 'mesh-snap --help'" >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+# ─── Output helpers ──────────────────────────────────────────────────
+info() { (( QUIET )) || printf '· %s\n' "$1" >&2; }
+warn() { printf '! %s\n' "$1" >&2; }
+err()  { printf '✗ %s\n' "$1" >&2; }
+
+# ─── Dep check ───────────────────────────────────────────────────────
+if ! command -v jq >/dev/null 2>&1; then
+    err "jq missing — install via dev-bootstrap topic 00-core (apt install jq / brew install jq)"
+    exit 1
+fi
+if ! command -v git >/dev/null 2>&1; then
+    err "git missing — required to inspect repo state"
+    exit 1
+fi
+
+# ─── Config ──────────────────────────────────────────────────────────
+CONF="${CONFIG_OVERRIDE:-${MESH_STATUS_CONF:-$HOME/.config/dotfiles/mesh-status.conf}}"
+
+# Defaults — overridden by config file if present.
+MESH_SYNC_DIR="${MESH_SYNC_DIR:-$HOME/Sync/mesh-status}"
+MESH_HISTORY_DIR="${MESH_HISTORY_DIR:-$HOME/.local/state/dotfiles/mesh-history}"
+MESH_HISTORY_RETENTION_DAYS="${MESH_HISTORY_RETENTION_DAYS:-90}"
+MESH_REPOS=("dev-bootstrap" "dotfiles" "dotfiles-template")
+# Default to empty JSON object. Note the awkward expansion: bash's
+# ${var:-X} terminates the substitution at the first unbalanced `}`, so
+# `${MAP:-{}}` parses as "default is {" with a trailing literal `}` —
+# wrong. Use a temp var as default to keep the braces literal.
+_MESH_TS_DEFAULT='{}'
+MESH_TAILSCALE_ALIAS_MAP="${MESH_TAILSCALE_ALIAS_MAP:-$_MESH_TS_DEFAULT}"
+MESH_REFERENCE_BRANCH="${MESH_REFERENCE_BRANCH:-main}"
+
+if [[ -r "$CONF" ]]; then
+    # shellcheck disable=SC1090  # path is user-configurable
+    source "$CONF"
+fi
+
+# Lock state dir (sibling to history). Used to coordinate concurrent runs.
+MESH_STATE_DIR="${MESH_STATE_DIR:-$HOME/.local/state/dotfiles}"
+MESH_LOCK_DIR="$MESH_STATE_DIR/mesh-snap.lock.d"
+
+# Track partial-success state — any collector that fails sets this.
+PARTIAL=0
+
+# ─── Time helpers ────────────────────────────────────────────────────
+# Cross-platform UTC ISO-8601 (sub-second precision varies by OS, drop it).
+_now_utc() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# stat -c on Linux, stat -f on macOS — wrap to a single helper that emits
+# epoch seconds for a path's mtime (or empty string if path missing).
+_mtime_epoch() {
+    local p="$1"
+    [[ -e "$p" ]] || return 0
+    if stat -c %Y "$p" 2>/dev/null; then
+        return 0
+    fi
+    if stat -f %m "$p" 2>/dev/null; then
+        return 0
+    fi
+    return 0
+}
+
+# Convert epoch (seconds) to ISO-8601 UTC. Empty input → empty output.
+_epoch_to_iso() {
+    local e="${1:-}"
+    [[ -z "$e" ]] && return 0
+    # macOS `date -r SECS`, GNU `date -d @SECS`. Try GNU first.
+    date -u -d "@$e" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null && return 0
+    date -u -r "$e"  +%Y-%m-%dT%H:%M:%SZ 2>/dev/null && return 0
+    return 0
+}
+
+# ─── Resolve canonical alias for this host ──────────────────────────
+# Resolution order (highest priority first):
+#   1. $MESH_HOST_ALIAS — explicit user override in mesh-status.conf
+#   2. lookup of $(hostname -s) in $MESH_TAILSCALE_ALIAS_MAP — the same
+#      JSON map already used to render peer aliases. If `code-server`
+#      is mapped to `mac` for the panel, then `code-server` running
+#      mesh-snap should also write `mac.json`, not `code-server.json`.
+#   3. fallback: $(hostname -s) raw — last resort.
+#
+# The map lookup means most users don't need to set MESH_HOST_ALIAS at
+# all — populating MESH_TAILSCALE_ALIAS_MAP (which they already do for
+# panel rendering) is enough.
+_resolve_alias() {
+    if [[ -n "${MESH_HOST_ALIAS:-}" ]]; then
+        echo "$MESH_HOST_ALIAS"
+        return 0
+    fi
+    local hn
+    hn="$(hostname -s 2>/dev/null || echo unknown)"
+    if [[ -n "${MESH_TAILSCALE_ALIAS_MAP:-}" ]] && command -v jq >/dev/null 2>&1; then
+        local mapped
+        mapped="$(printf '%s' "$MESH_TAILSCALE_ALIAS_MAP" \
+                  | jq -r --arg h "$hn" '.[$h] // empty' 2>/dev/null)"
+        if [[ -n "$mapped" ]]; then
+            echo "$mapped"
+            return 0
+        fi
+    fi
+    echo "$hn"
+}
+
+# ─── Collector: host metadata ────────────────────────────────────────
+# Returns a JSON object on stdout. Never fails — fields default to null/empty
+# rather than aborting the snapshot.
+collect_host() {
+    local alias hostname os os_release kernel arch wsl
+    alias="$(_resolve_alias)"
+    hostname="$(hostname -s 2>/dev/null || echo unknown)"
+    os="$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+    kernel="$(uname -r 2>/dev/null || echo '')"
+    arch="$(uname -m 2>/dev/null || echo '')"
+
+    # WSL detection — convention is consistent across the project.
+    # See PROJECT_STATUS D26 + feedback_wsl_interop_channels_and_encoding.md.
+    if [[ -e /proc/sys/fs/binfmt_misc/WSLInterop ]]; then
+        wsl=true
+    else
+        wsl=false
+    fi
+
+    # OS release: prefer /etc/os-release on Linux, sw_vers on macOS.
+    if [[ "$os" == "darwin" ]]; then
+        if command -v sw_vers >/dev/null 2>&1; then
+            local mac_ver mac_name
+            mac_ver="$(sw_vers -productVersion 2>/dev/null || echo '')"
+            mac_name="$(sw_vers -productName 2>/dev/null || echo macOS)"
+            os_release="$mac_name $mac_ver"
+        else
+            os_release=""
+        fi
+    elif [[ -r /etc/os-release ]]; then
+        # shellcheck disable=SC1091  # /etc/os-release is well-defined
+        local NAME="" VERSION_ID="" PRETTY_NAME=""
+        # Source a subset rather than full file (avoid trampling user env).
+        local osr
+        osr="$(grep -E '^(NAME|VERSION_ID|PRETTY_NAME)=' /etc/os-release 2>/dev/null || true)"
+        eval "$osr" 2>/dev/null || true
+        if [[ -n "$PRETTY_NAME" ]]; then
+            os_release="$PRETTY_NAME"
+        elif [[ -n "$NAME" ]]; then
+            os_release="$NAME ${VERSION_ID:-}"
+        else
+            os_release=""
+        fi
+    else
+        os_release=""
+    fi
+
+    jq -n \
+        --arg alias "$alias" \
+        --arg hostname "$hostname" \
+        --arg os "$os" \
+        --arg os_release "$os_release" \
+        --arg kernel "$kernel" \
+        --arg arch "$arch" \
+        --argjson wsl "$wsl" \
+        '{alias: $alias, hostname: $hostname, os: $os, os_release: $os_release,
+          kernel: $kernel, wsl: $wsl, arch: $arch}'
+}
+
+# ─── Collector: per-repo state ───────────────────────────────────────
+# For a single repo name, emits a JSON object with branch, head SHA, dirty,
+# ahead/behind, origin/main SHA, last_fetched_at, last_applied. Reads refs
+# from the local git store (no fetch in this commit; --no-fetch behavior).
+#
+# Lookup path: $MESH_REPO_PATH_<name_with_underscores> override > $HOME/<name>.
+# Names with hyphens map to underscores for the var lookup, matching how
+# users write them in mesh-status.conf.
+_repo_path_for() {
+    local name="$1"
+    local var_name="MESH_REPO_PATH_${name//-/_}"
+    # bash 3.2 friendly indirect ref (avoid `${!var}` issues with set -u)
+    local val=""
+    eval "val=\${$var_name:-}"
+    if [[ -n "$val" ]]; then
+        printf '%s' "$val"
+    else
+        printf '%s/%s' "$HOME" "$name"
+    fi
+}
+
+# State path used by auto-update. Consulted for last_applied per-repo.
+_LAST_APPLIED_DIR="${AUTO_UPDATE_STATE_DIR:-$HOME/.local/state/dev-bootstrap}"
+
+# Fetch timeout (seconds). Mirrors auto-update's defaults; configurable.
+MESH_FETCH_TIMEOUT="${MESH_FETCH_TIMEOUT:-3}"
+
+# Detect timeout(1) — Linux ships `timeout`, macOS may ship `gtimeout` via
+# `brew install coreutils`. If absent, _fetch_with_timeout falls back to
+# running git fetch unbounded (git's own protocol timeouts will still apply).
+if command -v timeout >/dev/null 2>&1; then
+    _MESH_TIMEOUT_BIN=timeout
+elif command -v gtimeout >/dev/null 2>&1; then
+    _MESH_TIMEOUT_BIN=gtimeout
+else
+    _MESH_TIMEOUT_BIN=""
+fi
+
+_fetch_with_timeout() {
+    local repo_path="$1"
+    if [[ -n "$_MESH_TIMEOUT_BIN" ]]; then
+        "$_MESH_TIMEOUT_BIN" "$MESH_FETCH_TIMEOUT" git -C "$repo_path" fetch --quiet --prune 2>/dev/null
+    else
+        git -C "$repo_path" fetch --quiet --prune 2>/dev/null
+    fi
+}
+
+collect_repo() {
+    local name="$1"
+    local path branch head_sha head_short tag_describe dirty
+    local ahead behind origin_sha last_fetched_at_iso
+    local last_applied_sha last_applied_iso last_applied_file
+
+    path="$(_repo_path_for "$name")"
+
+    if [[ ! -d "$path/.git" ]]; then
+        # Not present on this host. Still emit a row (UI shows "—").
+        # Reason left empty so we can extend taxonomy later (not_cloned vs perms vs broken).
+        jq -n \
+            --arg path "$path" \
+            '{present: false, path: $path, reason: "not_cloned"}'
+        return 0
+    fi
+
+    # Best-effort fetch (spec §5.1). If it fails (offline, timeout, auth),
+    # origin/main + last_fetched_at simply reflect the previous fetch
+    # state — derived from local refs below, so failure is invisible.
+    # --no-fetch skips this entirely (CI / debug / no-network).
+    if (( ! NO_FETCH )); then
+        _fetch_with_timeout "$path" || true
+    fi
+
+    branch="$(git -C "$path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+    head_sha="$(git -C "$path" rev-parse HEAD 2>/dev/null || echo '')"
+    head_short="${head_sha:0:7}"
+    tag_describe="$(git -C "$path" describe --tags --always 2>/dev/null || echo '')"
+
+    if [[ -n "$(git -C "$path" status --porcelain 2>/dev/null)" ]]; then
+        dirty=true
+    else
+        dirty=false
+    fi
+
+    # origin/<branch> ref + ahead/behind. Both gracefully degrade if remote
+    # ref absent (fresh clone, or remote never fetched). All three fields
+    # become null in that case so the viewer can show "?" instead of 0/0.
+    origin_sha="$(git -C "$path" rev-parse "origin/${MESH_REFERENCE_BRANCH}" 2>/dev/null || echo '')"
+    # Detached HEAD: ahead/behind comparison still has a meaning vs
+    # origin/main, but spec §10.2 wants ahead/behind reported as null in
+    # this case so the UI can show "branch: HEAD (detached)" cleanly
+    # without a misleading "↓N behind" row.
+    if [[ "$branch" == "HEAD" ]]; then
+        ahead=""
+        behind=""
+    elif [[ -n "$origin_sha" ]]; then
+        # rev-list --left-right --count emits "<ahead>\t<behind>" relative to
+        # the symmetric diff origin/main...HEAD.
+        local lr
+        lr="$(git -C "$path" rev-list --left-right --count "origin/${MESH_REFERENCE_BRANCH}...HEAD" 2>/dev/null || echo '')"
+        if [[ -n "$lr" ]]; then
+            # Format: "<behind>\t<ahead>" — left is behind (origin), right is ahead (HEAD).
+            behind="$(echo "$lr" | awk '{print $1}')"
+            ahead="$(echo "$lr"  | awk '{print $2}')"
+        else
+            ahead=""
+            behind=""
+        fi
+    else
+        ahead=""
+        behind=""
+    fi
+
+    # last_fetched_at: mtime of .git/FETCH_HEAD. Absent on fresh clones.
+    if [[ -e "$path/.git/FETCH_HEAD" ]]; then
+        last_fetched_at_iso="$(_epoch_to_iso "$(_mtime_epoch "$path/.git/FETCH_HEAD")")"
+    else
+        last_fetched_at_iso=""
+    fi
+
+    # last_applied: per-repo file written by auto-update.
+    last_applied_file="$_LAST_APPLIED_DIR/last-applied-$name"
+    if [[ -r "$last_applied_file" ]]; then
+        last_applied_sha="$(cat "$last_applied_file" 2>/dev/null || echo '')"
+        last_applied_iso="$(_epoch_to_iso "$(_mtime_epoch "$last_applied_file")")"
+    else
+        last_applied_sha=""
+        last_applied_iso=""
+    fi
+
+    # Compose. Empty strings → null in JSON via the @json filter pattern below.
+    # We use --arg for strings and `if . == "" then null else . end` to convert.
+    jq -n \
+        --arg path "$path" \
+        --arg branch "$branch" \
+        --arg head_sha "$head_sha" \
+        --arg head_short "$head_short" \
+        --arg tag_describe "$tag_describe" \
+        --argjson dirty "$dirty" \
+        --arg ahead "$ahead" \
+        --arg behind "$behind" \
+        --arg origin_sha "$origin_sha" \
+        --arg last_fetched_at "$last_fetched_at_iso" \
+        --arg last_applied_sha "$last_applied_sha" \
+        --arg last_applied_at "$last_applied_iso" \
+        '
+        def or_null: if . == "" then null else . end;
+        def to_int_or_null: if . == "" then null else (try (tonumber) catch null) end;
+        {
+            present: true,
+            path: $path,
+            branch: ($branch | or_null),
+            head_sha: ($head_sha | or_null),
+            head_short: ($head_short | or_null),
+            tag_describe: ($tag_describe | or_null),
+            dirty: $dirty,
+            ahead: ($ahead | to_int_or_null),
+            behind: ($behind | to_int_or_null),
+            origin_main_sha: ($origin_sha | or_null),
+            last_fetched_at: ($last_fetched_at | or_null),
+            last_applied: {
+                sha: ($last_applied_sha | or_null),
+                at:  ($last_applied_at  | or_null)
+            }
+        }'
+}
+
+# Compose all repos into a single object keyed by repo name.
+collect_all_repos() {
+    local repo
+    local first=1
+    printf '{'
+    for repo in "${MESH_REPOS[@]}"; do
+        local entry
+        entry="$(collect_repo "$repo" 2>/dev/null || echo 'null')"
+        if [[ -z "$entry" || "$entry" == "null" ]]; then
+            entry='{"present": false, "reason": "collector_error"}'
+            PARTIAL=1
+        fi
+        if (( first )); then
+            first=0
+        else
+            printf ','
+        fi
+        # Use jq to safely encode the key (handles edge cases in repo names).
+        printf '%s:%s' "$(jq -n --arg k "$repo" '$k')" "$entry"
+    done
+    printf '}'
+}
+
+# ─── Collector: drift (delegate to doctor.sh) ────────────────────────
+# Looks for doctor.sh next to mesh-snap (the dotfiles repo's scripts/) or
+# in $HOME/dotfiles/scripts/. If absent or it errors, emit a stub object
+# that explains why — keeps snapshot useful when this host doesn't have
+# the dotfiles repo cloned.
+#
+# doctor.sh's --json schema (today): {ok, drift, missing, marker_miss,
+# drift_items, missing_items, marker_miss_items}. We reshape it to the
+# spec §4.1 schema (doctor_ran, doctor_exit, *_count, items[]).
+collect_drift() {
+    local doctor=""
+    # Locate doctor.sh in this priority order:
+    #   1. $MESH_DOCTOR (env override — used by tests + custom layouts)
+    #   2. $HOME/dotfiles/scripts/doctor.sh (deployed layout, primary)
+    #   3. dirname($0)/doctor.sh (sibling — dev checkout, last resort)
+    # The dev-checkout fallback is intentionally last so production runs
+    # against the user's HOME repo, not whatever copy ships in PATH.
+    local self_dir
+    self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ -n "${MESH_DOCTOR:-}" && -x "$MESH_DOCTOR" ]]; then
+        doctor="$MESH_DOCTOR"
+    elif [[ -x "$HOME/dotfiles/scripts/doctor.sh" ]]; then
+        doctor="$HOME/dotfiles/scripts/doctor.sh"
+    elif [[ -x "$self_dir/doctor.sh" ]]; then
+        doctor="$self_dir/doctor.sh"
+    fi
+
+    if [[ -z "$doctor" ]]; then
+        jq -n '{
+            doctor_ran: false,
+            doctor_exit: null,
+            missing_count: 0,
+            drift_count: 0,
+            marker_absent_count: 0,
+            items: [],
+            error: "doctor.sh not found"
+        }'
+        return 0
+    fi
+
+    local raw rc=0
+    raw="$(bash "$doctor" --json 2>/dev/null)" || rc=$?
+    if [[ -z "$raw" ]]; then
+        PARTIAL=1
+        jq -n --arg err "doctor.sh emitted no output (rc=$rc)" '{
+            doctor_ran: true,
+            doctor_exit: null,
+            missing_count: 0,
+            drift_count: 0,
+            marker_absent_count: 0,
+            items: [],
+            error: $err
+        }'
+        return 0
+    fi
+
+    # Defensive parse: macOS bash 3.2 + `set -u` aborts mid-JSON on empty
+    # arrays in doctor.sh (pre-existing bug, see IMPLEMENTATION_NOTES.md).
+    # If jq can't parse, emit error rather than crashing the snapshot.
+    if ! echo "$raw" | jq -e . >/dev/null 2>&1; then
+        PARTIAL=1
+        jq -n --arg err "doctor.sh stdout not valid JSON (likely bash 3.2 set -u quirk on empty arrays — see IMPLEMENTATION_NOTES.md)" --arg rc "$rc" '{
+            doctor_ran: true,
+            doctor_exit: ($rc | tonumber),
+            missing_count: 0,
+            drift_count: 0,
+            marker_absent_count: 0,
+            items: [],
+            error: $err
+        }'
+        return 0
+    fi
+
+    # Reshape doctor's flat schema into ours. Defensive against schema drift —
+    # missing fields default to 0/[].
+    local rc_int="$rc"
+    echo "$raw" | jq --argjson exit "$rc_int" '
+        def list_to_items(kind):
+            (. // []) | map({path: ., kind: kind, detail: null});
+        {
+            doctor_ran: true,
+            doctor_exit: $exit,
+            missing_count:       (.missing      // 0),
+            drift_count:         (.drift        // 0),
+            marker_absent_count: (.marker_miss  // 0),
+            items: (
+                ((.drift_items       // []) | list_to_items("drift")) +
+                ((.missing_items     // []) | list_to_items("missing")) +
+                ((.marker_miss_items // []) | list_to_items("marker_absent"))
+            )
+        }'
+}
+
+# ─── Collector: advisories ───────────────────────────────────────────
+# Reads $HOME/.local/state/dotfiles/followup/*.json. Schema is undefined
+# today — be best-effort: count is len of valid JSON files, items have
+# kind/severity/since/detail when extractable. Spec §14: only `kind` is
+# emitted, never the literal followup message body (avoids token leaks).
+collect_advisories() {
+    local followup_dir="${MESH_FOLLOWUP_DIR:-$HOME/.local/state/dotfiles/followup}"
+    if [[ ! -d "$followup_dir" ]]; then
+        jq -n '{count: 0, items: []}'
+        return 0
+    fi
+
+    # Find regular files only — depth 1, ignore dotfiles. nullglob would be
+    # cleaner but breaks bash 3.2 noglob expectations; use a literal find.
+    local items='[]'
+    local f
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        # Best-effort parse: if not valid JSON, skip silently (spec §14).
+        if ! jq -e . <"$f" >/dev/null 2>&1; then
+            continue
+        fi
+        local entry
+        # Pull kind / severity / since with sane fallbacks. Never include
+        # "detail" body (privacy: spec §14).
+        entry="$(jq --arg fname "$(basename "$f")" '
+            {
+                kind:     ((.kind // .name // $fname) | tostring),
+                severity: ((.severity // "info") | tostring),
+                since:    (.since // .created_at // null),
+                detail:   null
+            }' <"$f" 2>/dev/null || echo 'null')"
+        if [[ "$entry" != "null" && -n "$entry" ]]; then
+            items="$(jq --argjson e "$entry" '. + [$e]' <<<"$items")"
+        fi
+    done < <(find "$followup_dir" -maxdepth 1 -type f -name '*.json' 2>/dev/null | sort)
+
+    jq -n --argjson items "$items" '{count: ($items | length), items: $items}'
+}
+
+# ─── Collector: network (tailscale) ──────────────────────────────────
+# Reads `tailscale status --json --peers --self` and reshapes it into
+# the spec §4.1 schema. Gracefully degrades if tailscale is absent or
+# the daemon is down (returns `installed: false` or `up: false`).
+#
+# Alias mapping: $MESH_TAILSCALE_ALIAS_MAP is a JSON object mapping
+# tailnet hostnames (HostName field, e.g. "crcmg005078") to canonical
+# panel aliases ("crc"). Unmapped hostnames pass through verbatim.
+collect_network() {
+    if ! command -v tailscale >/dev/null 2>&1; then
+        jq -n '{tailscale: {installed: false}}'
+        return 0
+    fi
+
+    local ts_version raw rc=0
+    ts_version="$(tailscale version 2>/dev/null | head -1 || echo '')"
+
+    raw="$(tailscale status --json --peers --self 2>/dev/null)" || rc=$?
+    if (( rc != 0 )) || [[ -z "$raw" ]]; then
+        # Daemon not responding / not authenticated.
+        jq -n --arg ver "$ts_version" '{
+            tailscale: {
+                installed: true,
+                version: $ver,
+                up: false,
+                auth_status: "unknown",
+                self: null,
+                peers_online: 0,
+                peers_offline: 0,
+                peers: []
+            }
+        }'
+        return 0
+    fi
+
+    # Decode and reshape. BackendState in {Running, NeedsLogin, Stopped, ...}.
+    # Online flag at top-level: best signal is BackendState=="Running" + Self.Online.
+    echo "$raw" | jq \
+        --arg ver "$ts_version" \
+        --argjson alias_map "$MESH_TAILSCALE_ALIAS_MAP" \
+        '
+        def alias_for(h): ($alias_map[h] // h);
+        def auth_from_state(s):
+            if   s == "Running"     then "authenticated"
+            elif s == "NeedsLogin"  then "logged_out"
+            elif s == "Stopped"     then "logged_out"
+            elif s == "NoState"     then "unknown"
+            else "unknown"
+            end;
+
+        . as $r |
+        ($r.BackendState // "unknown") as $state |
+        (auth_from_state($state)) as $auth |
+        ($state == "Running") as $up |
+
+        # Self block — be defensive: any field may be missing if daemon partially up.
+        ($r.Self // {}) as $self |
+        ($self.TailscaleIPs // []) as $self_ips |
+
+        # Peer is an object keyed by node ID. Convert to array preserving order.
+        ($r.Peer // {}) as $peers_obj |
+        ($peers_obj | to_entries | map(.value)) as $peers_arr |
+
+        ($peers_arr | map(select(.Online == true)) | length) as $peers_online |
+        ($peers_arr | map(select(.Online != true)) | length) as $peers_offline |
+
+        {
+            tailscale: {
+                installed: true,
+                version: $ver,
+                up: $up,
+                auth_status: $auth,
+                self: (
+                    if $self == {} then null else {
+                        ip:        ($self_ips[0] // null),
+                        magicdns:  ($self.DNSName // null),
+                        os:        ($self.OS // null)
+                    } end
+                ),
+                peers_online: $peers_online,
+                peers_offline: $peers_offline,
+                peers: ($peers_arr | map({
+                    alias:       (alias_for(.HostName // "")),
+                    tailnet_name: (.HostName // null),
+                    ip:          ((.TailscaleIPs // [])[0] // null),
+                    online:      (.Online // false),
+                    last_seen:   (.LastSeen // null),
+                    os:          (.OS // null),
+                    key_expired: (
+                        if (.KeyExpiry // null) == null then false
+                        else (.KeyExpiry | fromdateiso8601? // 0) < (now | floor)
+                        end
+                    )
+                }))
+            }
+        }'
+}
+
+# ─── Compose snapshot ────────────────────────────────────────────────
+build_snapshot() {
+    local host repos drift adv net
+    host="$(collect_host)"
+    repos="$(collect_all_repos)"
+    drift="$(collect_drift)"
+    adv="$(collect_advisories)"
+    net="$(collect_network)"
+
+    jq -n \
+        --arg version "$MESH_SNAP_VERSION" \
+        --arg captured_at "$(_now_utc)" \
+        --argjson host "$host" \
+        --argjson repos "$repos" \
+        --argjson drift "$drift" \
+        --argjson advisories "$adv" \
+        --argjson network "$net" \
+        '{
+            schema_version: 1,
+            captured_at: $captured_at,
+            captured_by: ("mesh-snap/" + $version),
+            host: $host,
+            repos: $repos,
+            drift: $drift,
+            advisories: $advisories,
+            network: $network
+        }'
+}
+
+# ─── Atomic write helpers ────────────────────────────────────────────
+# tmp-in-same-dir + mv. Same FS guarantee → POSIX rename(2) atomic.
+_atomic_write() {
+    local target="$1" content="$2"
+    local dir tmp
+    dir="$(dirname "$target")"
+    mkdir -p "$dir"
+    tmp="$(mktemp "$dir/.mesh-snap.XXXXXX")" || {
+        err "failed to create tmp file in $dir"
+        return 1
+    }
+    printf '%s\n' "$content" > "$tmp"
+    mv "$tmp" "$target"
+}
+
+# ─── JSON-only mode (debug) ──────────────────────────────────────────
+if (( JSON_STDOUT )); then
+    build_snapshot
+    exit 0
+fi
+
+# ─── Lock (mkdir-based mutex; same approach as auto-update.sh) ──────
+# Why not flock(1): GNU-only, not shipped on macOS without `brew install
+# flock`. mkdir is atomic on POSIX and fails when the target exists —
+# free mutex semantics with zero deps. Stale-lock recovery: if dir is
+# older than 1 minute, assume crashed prior run and steal it (snapshots
+# normally finish in <2s; 60s leaves comfortable margin).
+_acquire_lock() {
+    if mkdir "$MESH_LOCK_DIR" 2>/dev/null; then
+        return 0
+    fi
+    # Stale check — same heuristic as scripts/auto-update.sh.
+    if [[ -d "$MESH_LOCK_DIR" ]] && \
+       [[ -n "$(find "$MESH_LOCK_DIR" -maxdepth 0 -mmin +1 2>/dev/null)" ]]; then
+        rmdir "$MESH_LOCK_DIR" 2>/dev/null
+        mkdir "$MESH_LOCK_DIR" 2>/dev/null && return 0
+    fi
+    return 1
+}
+
+# Set up lock dir parent — mkdir -p is idempotent.
+if ! mkdir -p "$MESH_STATE_DIR" 2>/dev/null; then
+    err "cannot create state dir $MESH_STATE_DIR"
+    exit 1
+fi
+
+if ! _acquire_lock; then
+    # Another mesh-snap is running — silent skip per spec §9.
+    info "another mesh-snap in progress; skipping"
+    exit 0
+fi
+trap 'rmdir "$MESH_LOCK_DIR" 2>/dev/null' EXIT INT TERM
+
+# ─── Resolve alias + sync dir ────────────────────────────────────────
+# Single source of truth — see _resolve_alias() above.
+ALIAS="$(_resolve_alias)"
+
+if ! mkdir -p "$MESH_SYNC_DIR" 2>/dev/null; then
+    warn "could not create $MESH_SYNC_DIR; aborting"
+    exit 1
+fi
+
+# ─── Build + write snapshot ──────────────────────────────────────────
+SNAPSHOT="$(build_snapshot)"
+TARGET="$MESH_SYNC_DIR/$ALIAS.json"
+
+if ! _atomic_write "$TARGET" "$SNAPSHOT"; then
+    err "atomic write to $TARGET failed"
+    exit 1
+fi
+
+info "wrote $TARGET"
+
+# ─── History append + rotation ───────────────────────────────────────
+# Append a timestamped copy under $MESH_HISTORY_DIR/<alias>-<ts>.json so
+# we keep an audit trail. Rotation deletes files older than
+# $MESH_HISTORY_RETENTION_DAYS via mtime. --no-history skips both steps
+# (used for debugging or by hosts that opt out of audit).
+if (( ! NO_HISTORY )); then
+    if mkdir -p "$MESH_HISTORY_DIR" 2>/dev/null; then
+        # ts in compact form, : replaced by - for portable filenames.
+        local_ts="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+        history_file="$MESH_HISTORY_DIR/$ALIAS-$local_ts.json"
+        if printf '%s\n' "$SNAPSHOT" > "$history_file" 2>/dev/null; then
+            info "appended $history_file"
+        else
+            warn "could not write history file $history_file"
+        fi
+        # Rotate: drop files older than retention window. Both Linux and
+        # macOS find understand -mtime + -delete.
+        if [[ "$MESH_HISTORY_RETENTION_DAYS" =~ ^[0-9]+$ ]] \
+           && (( MESH_HISTORY_RETENTION_DAYS > 0 )); then
+            find "$MESH_HISTORY_DIR" -maxdepth 1 -type f -name "${ALIAS}-*.json" \
+                -mtime "+$MESH_HISTORY_RETENTION_DAYS" -delete 2>/dev/null || true
+        fi
+    else
+        warn "could not create history dir $MESH_HISTORY_DIR"
+    fi
+fi
+
+if (( PARTIAL )); then
+    exit 2
+fi
+exit 0

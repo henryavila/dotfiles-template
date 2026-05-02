@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# scripts/mesh — unified dispatcher for the dotfiles ecosystem.
+#
+# Replaces the older quartet `bup` / `dotup` / `mesh-snap` / `mesh-status`
+# with a single command. Subcommands delegate to the underlying motors:
+#
+#   mesh status [<alias>] [flags]   →  scripts/lib/mesh-status (positional → --detail)
+#   mesh snap   [flags]             →  scripts/lib/mesh-snap   (passthrough)
+#   mesh update [<repo>] [flags]    →  scripts/auto-update.sh  (--repo NAME)
+#
+# Bare `mesh` (no subcommand) renders the cross-mesh dashboard (= `mesh status`).
+#
+# Spec: docs/2026-05-02-mesh-cli-refactor-spec.md
+# Bash 3.2 compatible (macOS default).
+
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ─── Companion resolution ──────────────────────────────────────────
+# 3-tier lookup for the lib + motor scripts that this dispatcher
+# delegates to. Solves the deploy-time path puzzle: when install.sh
+# copies `scripts/mesh` to `~/.local/bin/mesh`, $HERE points at the
+# bin dir which has no companions. We fall back to $HOME/dotfiles/.
+#
+# Tier order:
+#   1. $MESH_HOME (env override; test fixtures, manual relocation)
+#   2. $HERE/<target> (development tree; template before deploy)
+#   3. $HOME/dotfiles/scripts/<target> (deployed default)
+#
+# Returns absolute path on stdout; empty on miss.
+_resolve_companion() {
+    local target="$1"
+    if [[ -n "${MESH_HOME:-}" ]] && { [[ -d "$MESH_HOME/$target" ]] || [[ -f "$MESH_HOME/$target" ]]; }; then
+        echo "$MESH_HOME/$target"
+        return
+    fi
+    if [[ -d "$HERE/$target" ]] || [[ -f "$HERE/$target" ]]; then
+        echo "$HERE/$target"
+        return
+    fi
+    local home_target="$HOME/dotfiles/scripts/$target"
+    if [[ -d "$home_target" ]] || [[ -f "$home_target" ]]; then
+        echo "$home_target"
+        return
+    fi
+    echo ""
+}
+
+_die() {
+    printf 'mesh: %s\n' "$*" >&2
+    exit 1
+}
+
+# ─── Help ──────────────────────────────────────────────────────────
+
+_print_help() {
+    cat <<'EOF'
+Mesh CLI — unified entrypoint for ecosystem maintenance.
+
+Usage:
+  mesh                              Show cross-mesh status panel (= mesh status)
+  mesh status [<alias>] [flags]     Cross-mesh dashboard; positional drill-down
+  mesh snap [flags]                 Generate this host's snapshot
+  mesh update [<repo>] [flags]      Pull and apply updates (incremental)
+  mesh -h | --help                  This help
+  mesh -V | --version               Version
+
+Subcommands:
+  status   View cross-mesh state. `mesh status crc` → drill-down on host 'crc'.
+           Run `mesh status -h` for flags (--detail, --write, --json, --refresh, …).
+  snap     Refresh this host's snapshot. Hooks call this automatically;
+           rarely run by hand. `mesh snap -h` for flags.
+  update   Pull commits and re-apply install scripts for one or both repos.
+           Positional <repo> = `bootstrap` (alias for dev-bootstrap) or `dotfiles`.
+           Flags forwarded: --full, --reset-auth, --from-shell-start, etc.
+
+Examples:
+  mesh                              Open the panel
+  mesh status crc                   Drill-down on host 'crc'
+  mesh status --write               Refresh §3 of PROJECT_STATUS.md
+  mesh update                       Update both dev-bootstrap and dotfiles
+  mesh update bootstrap --full      Force full bootstrap re-run
+  mesh update dotfiles              Just update personal dotfiles
+
+Configuration:
+  ~/.config/dotfiles/mesh-status.conf   (alias map, repos tracked, retention)
+  ~/.config/dotfiles/auto-update.conf   (which repos to track, sudo regex)
+
+Spec: docs/2026-05-02-mesh-cli-refactor-spec.md
+EOF
+}
+
+# ─── Subcommand handlers ───────────────────────────────────────────
+
+sub_status() {
+    local lib
+    lib="$(_resolve_companion "lib/mesh-status")"
+    [[ -n "$lib" ]] || _die "lib/mesh-status not found (set \$MESH_HOME or check installation)"
+
+    # First non-flag arg becomes positional alias → translates to --detail.
+    # If first arg is a flag (or no args), pass through as-is.
+    local first="${1:-}"
+    case "$first" in
+        --*|-*|"")
+            exec "$lib" "$@"
+            ;;
+        *)
+            local alias_arg="$1"
+            shift
+            exec "$lib" --detail "$alias_arg" "$@"
+            ;;
+    esac
+}
+
+sub_snap() {
+    local lib
+    lib="$(_resolve_companion "lib/mesh-snap")"
+    [[ -n "$lib" ]] || _die "lib/mesh-snap not found (set \$MESH_HOME or check installation)"
+    exec "$lib" "$@"
+}
+
+sub_update() {
+    local motor
+    motor="$(_resolve_companion "auto-update.sh")"
+    [[ -n "$motor" ]] || _die "auto-update.sh not found (set \$MESH_HOME or check installation)"
+
+    local target_repo=""
+    local pass_args=()
+    while (( $# > 0 )); do
+        case "$1" in
+            --*|-*) pass_args+=("$1"); shift ;;
+            bootstrap|dev-bootstrap) target_repo="dev-bootstrap"; shift ;;
+            dotfiles) target_repo="dotfiles"; shift ;;
+            *) _die "update: unknown arg '$1' (expected 'bootstrap' | 'dotfiles' | flag)" ;;
+        esac
+    done
+
+    if [[ -n "$target_repo" ]]; then
+        exec bash "$motor" --repo "$target_repo" "${pass_args[@]+"${pass_args[@]}"}"
+    fi
+
+    # No target — run both sequentially. Exit code = OR of both rc (any failure
+    # surfaces; user can see which via output). Bash 3.2 safe array expansion.
+    local bootstrap_rc=0 dotfiles_rc=0
+    bash "$motor" --repo dev-bootstrap "${pass_args[@]+"${pass_args[@]}"}"
+    bootstrap_rc=$?
+    bash "$motor" --repo dotfiles "${pass_args[@]+"${pass_args[@]}"}"
+    dotfiles_rc=$?
+    exit $(( bootstrap_rc | dotfiles_rc ))
+}
+
+# ─── Main dispatch ─────────────────────────────────────────────────
+
+case "${1:-status}" in
+    -h|--help)
+        _print_help
+        exit 0
+        ;;
+    -V|--version)
+        echo "mesh CLI v1 (template)"
+        exit 0
+        ;;
+    status)
+        shift
+        sub_status "$@"
+        ;;
+    snap)
+        shift
+        sub_snap "$@"
+        ;;
+    update)
+        shift
+        sub_update "$@"
+        ;;
+    --*|-*)
+        # Top-level flag with no subcommand → treat as status flag.
+        # Lets `mesh --json` work as shorthand for `mesh status --json`.
+        sub_status "$@"
+        ;;
+    *)
+        printf 'mesh: unknown subcommand %q\n\n' "$1" >&2
+        _print_help >&2
+        exit 1
+        ;;
+esac
