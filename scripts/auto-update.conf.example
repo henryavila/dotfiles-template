@@ -1,0 +1,53 @@
+# scripts/auto-update.conf — config for scripts/auto-update.sh
+#
+# Bash-sourceable. No JSON/YAML parser dep.
+# Deployed to ~/.config/dotfiles/auto-update.conf in `once` mode by
+# install.sh — edit there directly, not in the repo.
+#
+# Spec: docs/2026-04-25-auto-update-spec.md (auto-update motor)
+#       docs/2026-05-02-mesh-cli-refactor-spec.md (mesh CLI dispatcher)
+
+# Repos to track. Each entry: absolute path. Order = check order.
+# Defaults assume the canonical clone layout in $HOME. Adjust if you
+# clone elsewhere (e.g. when the disk is on /Volumes/External you
+# may symlink ~/dev-bootstrap → /Volumes/External/code/dev-bootstrap).
+AUTO_UPDATE_REPOS=(
+    "$HOME/dev-bootstrap"
+    "$HOME/dotfiles"
+)
+
+# Reload table: bash glob → command to run after a successful apply when a
+# diff path matches the glob. Special command "exec-shell-advice" sets the
+# SHELL_RC_CHANGED flag instead of running anything (consumed by auto-exec
+# logic at end-of-run).
+#
+# Add entries here when your fork ships shell fragments under different
+# paths (e.g. `*/shell/my-private.zsh:exec-shell-advice`).
+AUTO_UPDATE_RELOAD=(
+    "*/.tmux.conf:tmux source-file ~/.tmux.conf"
+    "*/tmux.conf:tmux source-file ~/.tmux.conf"
+    "*/.bashrc.d/*:exec-shell-advice"
+    "*/.zshrc.d/*:exec-shell-advice"
+    "*/bashrc.d-*.sh:exec-shell-advice"
+    "*/zshrc.d-*.sh:exec-shell-advice"
+    "*/shell/aliases.sh:exec-shell-advice"
+    "*/shell/zshrc.local:exec-shell-advice"
+    "*/shell/bashrc.local:exec-shell-advice"
+    "*/shell/p10k.zsh:exec-shell-advice"
+    "*/shell/auto-update.zsh:exec-shell-advice"
+)
+
+# Followup table: bash glob → manual followup message.
+# Emitted at end-of-run as info severity. Never auto-acted upon.
+# Empty by default — add fork-specific reminders here, e.g.:
+#   "*/claude/manifest/shared.json:run \`claude-replicate --apply\` to apply plugin changes"
+AUTO_UPDATE_FOLLOWUPS=()
+
+# Toggles. Use `: "${VAR:=default}"` so env vars override these defaults.
+: "${AUTO_EXEC_SHELL:=1}"                 # 1=auto-exec zsh on shell-start hook when shell rc changed; 0=just notice
+: "${AUTO_UPDATE_FETCH_TIMEOUT:=3}"       # seconds; passed to `timeout` wrapping `git fetch`
+: "${AUTO_UPDATE_VERBOSE:=0}"             # 1=print every step; 0=concise
+
+# Heuristic regex for "diff content needs sudo" — patches matching trigger a
+# `sudo -v` prompt before apply.
+: "${AUTO_UPDATE_SUDO_REGEX:=\\b(apt|brew|pip install|npm i |chsh|sudo)\\b|curl[^|]*\\|[^|]*sh}"
