@@ -93,6 +93,10 @@ bash install.sh             # aplicar
 | `claude/manifest/mcps-user.sh` | `~/.claude/manifest/mcps-user.sh` | overwrite |
 | `claude/stignore/claude-config.stignore` | `~/.claude/.stignore` (controla Syncthing em `~/.claude/`) | overwrite |
 | `claude/stignore/claude-mem.stignore` | `~/.claude-mem/.stignore` | overwrite |
+| `scripts/mesh` | `~/.local/bin/mesh` (chmod 755 — dispatcher único da CLI) | overwrite |
+| `config/mesh-status.conf.example` | `~/.config/dotfiles/mesh-status.conf` | **once** |
+| `scripts/auto-update.conf.example` | `~/.config/dotfiles/auto-update.conf` | **once** |
+| `shell/auto-update.zsh.example` | `~/.zshrc.d/auto-update.zsh` (hook interativo do zsh para `mesh update`) | overwrite |
 | `shell/zinit-uninstall.list` | _(lido in-place; não é deployado)_ | drift cleanup |
 
 > `shell/zinit-uninstall.list` é consumido durante `bash install.sh` para purgar o cache do zinit de qualquer plugin que você parou de carregar do `shell/zshrc.local`. Ver [Removendo plugins zinit](#removendo-plugins-zinit-drift-cleanup) abaixo.
@@ -157,6 +161,59 @@ Para resolver isso de forma limpa:
 
 Formato e racional documentados dentro do arquivo. Companion ao `lib/uninstall.sh` do `dev-bootstrap` (que cobre o lado brew/apt/clone da mesma aposentadoria, quando o plugin foi instalado por um topic).
 
+## mesh CLI — manutenção cross-machine
+
+Entrypoint unificado pra manter várias máquinas em sync. Substitui o
+quarteto antigo `bup` / `dotup` / `mesh-snap` / `mesh-status` que vivia
+em forks privados, consolidando tudo atrás de um único `mesh <subcommand>`.
+
+### O que faz
+
+- **`mesh status [<alias>]`** — dashboard cross-machine. Cada repo × cada
+  host mostra SHA do commit, drift, estado Tailscale online/offline,
+  ahead/behind vs `origin/main`. Drill-down posicional: `mesh status crc`
+  expande um host. Spec: `docs/2026-05-01-mesh-status-spec.md` no fork
+  privado.
+- **`mesh update [<repo>] [--full]`** — pull + reaplicação dos install
+  scripts. Padrão é incremental (só o diff desde o último SHA aplicado).
+  `mesh update bootstrap` escopa pra `dev-bootstrap`; `mesh update dotfiles`
+  pro seu fork. `--full` força bootstrap completo (`bash bootstrap.sh` /
+  `bash install.sh`) mesmo quando o diff parece pequeno.
+- **`mesh snap`** — captura o estado deste host pro painel. Chamado
+  automaticamente pelo `mesh update` e pelo hook do shell-start; raramente
+  rodado à mão. Output em `~/Sync/mesh-status/<alias>.json`.
+
+### Setup (depois do `bash install.sh`)
+
+Dois arquivos de config aterrissam em `~/.config/dotfiles/`:
+
+- **`mesh-status.conf`** — setar `MESH_TAILSCALE_ALIAS_MAP` pra mapear seus
+  hostnames Tailscale pros aliases curtos usados no painel. Escolher
+  `MESH_REPOS` listando quais paths de repo aparecem.
+- **`auto-update.conf`** — lista de repos pra auto-update (default:
+  `dev-bootstrap` + `dotfiles`). A reload table mapeia paths de shell-rc
+  pra ações, então editar `~/.zshrc.local` dispara um aviso de `exec zsh`
+  no próximo shell start.
+
+Pra `mesh status` mostrar dados de máquinas peer, snapshots dos hosts
+precisam replicar via Syncthing. Adicione uma folder apontando pra
+`~/Sync/mesh-status/` e parea com cada peer (folder separada da do Claude
+Sync pra manter mesh state visível durante hiccups do sync). O conf file
+ship os passos como comentário.
+
+### Opcional: hook do shell
+
+`shell/auto-update.zsh.example` é deployado em `~/.zshrc.d/auto-update.zsh`
+pelo `install.sh`. Roda `mesh update` (silencioso quando nada mudou) no
+primeiro prompt de cada nova sessão zsh interativa — então máquinas ficam
+fresh sem você lembrar de pull. Usa deferral one-shot via `precmd` pra
+rodar **depois** do cleanup do P10K instant-prompt, evitando o warning
+"Console output during initialization".
+
+O hook é opt-in: se preferir dirigir updates manualmente, basta deletar
+`~/.zshrc.d/auto-update.zsh` (ou substituir o copy deployado por arquivo
+vazio) e o dispatcher continua disponível pra `mesh update` explícito.
+
 ## Evolução do template ↔ seu fork
 
 GitHub Templates criam repos **sem história compartilhada** com o original, então `git merge upstream/main` não funciona. Modelo alternativo — **release-driven manual** (igual `create-react-app`, `vite`, `create-t3-app`):
@@ -181,6 +238,7 @@ GitHub Templates criam repos **sem história compartilhada** com o original, ent
 | `v2026-04-19` | `.example` files enriquecidos (aliases.sh, bashrc.local, gitconfig.local, htoprc, s3cfg); remove mapping `shell/inputrc` (bootstrap cobre). |
 | `v2026-04-20` | Nova pasta `claude/` com manifest + stignore + scripts de sync/merge. `install.sh` ganha 3 MAPPINGS. |
 | `v2026-04-30` | Novo `shell/zinit-uninstall.list.example` + `install.sh` consome para purgar cache de plugins zinit aposentados. Mecanismo genérico — sem opinião sobre quais plugins você usa. Companion do novo `lib/uninstall.sh` do `dev-bootstrap` (cobre lado brew/apt/clone). |
+| `v2026-05-02` | **mesh CLI**: comando unificado `mesh` consolida o quarteto antigo bup/dotup/mesh-snap/mesh-status que vivia em forks privados. Engine de auto-update + collector mesh-snap + viewer mesh-status migram do dotfiles privado pra dentro do template (todos os forks se beneficiam). Novos mappings: `scripts/mesh`, `config/mesh-status.conf.example`, `scripts/auto-update.conf.example`, `shell/auto-update.zsh.example`. 80/80 testes em 6 suítes. Ver seção "mesh CLI — manutenção cross-machine" acima. |
 
 ## Docs
 
