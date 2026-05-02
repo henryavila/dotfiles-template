@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "captured_at": "2999-01-01T05:00:00Z",
+  "captured_by": "mesh-snap/0.1.0",
+  "host": {"alias":"mac","hostname":"code-server","os":"darwin","os_release":"macOS 26","kernel":"25","wsl":false,"arch":"arm64"},
+  "repos": {
+    "dev-bootstrap": {"present":true,"path":"/Users/x/dev-bootstrap","branch":"main","head_sha":"9a19729000000000000000000000000000000000","head_short":"9a19729","tag_describe":"v1","dirty":false,"ahead":0,"behind":0,"origin_main_sha":"9a19729000000000000000000000000000000000","last_fetched_at":"2999-01-01T04:55:00Z","last_applied":{"sha":"9a19729000000000000000000000000000000000","at":"2998-12-31T22:00:00Z"}},
+    "dotfiles": {"present":true,"path":"/Users/x/dotfiles","branch":"main","head_sha":"c98a124000000000000000000000000000000000","head_short":"c98a124","tag_describe":"v0","dirty":false,"ahead":0,"behind":2,"origin_main_sha":"c98a124000000000000000000000000000000000","last_fetched_at":"2999-01-01T04:55:00Z","last_applied":{"sha":"c98a124000000000000000000000000000000000","at":"2998-12-31T22:00:00Z"}},
+    "dotfiles-template": {"present":false,"reason":"not_cloned"}
+  },
+  "drift": {"doctor_ran":true,"doctor_exit":1,"missing_count":0,"drift_count":1,"marker_absent_count":0,"items":[{"path":"/Users/x/.zshrc","kind":"drift","detail":null}]},
+  "advisories": {"count":2,"items":[{"kind":"chsh_pending","severity":"info","since":"2998-12-31T20:00:00Z","detail":null},{"kind":"ngrok_token","severity":"warning","since":"2998-12-25T10:00:00Z","detail":null}]},
+  "network": null
+}
