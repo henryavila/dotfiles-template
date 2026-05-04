@@ -66,6 +66,12 @@ parse_mappings() {
     awk '
         /^MAPPINGS=\(/ { inside=1; next }
         inside && /^\)/ { inside=0; next }
+        # Skip whitespace-only and comment lines inside the array. Without
+        # this, a comment containing a "|" would be passed downstream as if
+        # it were a real mapping triple. None today carry "|", but blocks
+        # like `# Plugin replication trio (manifest-based; alternative to ...)`
+        # could grow into trouble; cheaper to filter at the source.
+        inside && /^[ \t]*#/ { next }
         inside {
             gsub(/^[ \t]*"/, "")
             gsub(/"[ \t]*$/, "")

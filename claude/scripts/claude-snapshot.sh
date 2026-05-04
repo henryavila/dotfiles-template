@@ -44,7 +44,17 @@ if command -v git >/dev/null && git -C "$DOTFILES" rev-parse >/dev/null 2>&1; th
         echo "git diff (vs last commit):"
         git -C "$DOTFILES" --no-pager diff --stat "claude/manifest/snapshots/$HOST_LC.json"
         echo
-        echo "Commit when ready:  git -C $DOTFILES commit -m 'claude: snapshot $HOST_LC' claude/manifest/snapshots/$HOST_LC.json"
+        # Snapshots embed hostname + plugin list. claude/manifest/snapshots/.gitignore
+        # blocks `*.json` by default. Only print the commit hint when the user
+        # has explicitly opted in (private fork) via ALLOW_SNAPSHOT_COMMIT=1.
+        if [[ "${ALLOW_SNAPSHOT_COMMIT:-0}" == "1" ]]; then
+            echo "Commit when ready:  git -C $DOTFILES commit -m 'claude: snapshot $HOST_LC' claude/manifest/snapshots/$HOST_LC.json"
+        else
+            echo "Snapshot is local-only (claude/manifest/snapshots/.gitignore blocks *.json)."
+            echo "On a PRIVATE fork where machine-by-machine reproducibility is wanted,"
+            echo "set ALLOW_SNAPSHOT_COMMIT=1 to see the commit hint, then add an exception"
+            echo "to .gitignore (\`!$HOST_LC.json\` or remove the \`*.json\` line)."
+        fi
     else
         echo "(no diff vs last commit — snapshot unchanged)"
     fi

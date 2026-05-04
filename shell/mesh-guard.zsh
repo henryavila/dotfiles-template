@@ -43,6 +43,14 @@ _mesh_load_repos() {
         # Expand ~ and $HOME for portability across forks
         line="${line/#\~/$HOME}"
         line="${line//\$HOME/$HOME}"
+        # Reject relative paths early — `[[ "$PWD" == "$repo"* ]]` would never
+        # match (PWD is always absolute), so a relative entry is dead weight
+        # that suggests a misconfigured list. Warn once on shell start so the
+        # user notices rather than silently losing the redirect.
+        if [[ "$line" != /* ]]; then
+            print -u2 "mesh-guard: skipping non-absolute path in $_MESH_REPOS_FILE: $line"
+            continue
+        fi
         _MESH_REPOS+=("$line")
     done < "$_MESH_REPOS_FILE"
 }
