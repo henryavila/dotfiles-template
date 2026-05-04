@@ -93,6 +93,11 @@ bash install.sh             # aplicar
 | `claude/manifest/mcps-user.sh` | `~/.claude/manifest/mcps-user.sh` | overwrite |
 | `claude/stignore/claude-config.stignore` | `~/.claude/.stignore` (controla Syncthing em `~/.claude/`) | overwrite |
 | `claude/stignore/claude-mem.stignore` | `~/.claude-mem/.stignore` | overwrite |
+| `claude/scripts/claude-snapshot.sh` | `~/.local/bin/claude-snapshot` (chmod 755 — snapshot do manifest de plugins) | overwrite |
+| `claude/scripts/claude-replicate.sh` | `~/.local/bin/claude-replicate` (chmod 755 — aplica manifest num peer) | overwrite |
+| `claude/scripts/claude-promote.sh` | `~/.local/bin/claude-promote` (chmod 755 — promove um snapshot pra `shared.json`) | overwrite |
+| `claude/manifest/shared.json` | `~/.claude/manifest/shared.json` | **once** |
+| `scripts/doctor.sh` | _(invocado do repo: `bash ~/dotfiles/scripts/doctor.sh`)_ | detector de drift |
 | `scripts/mesh` | `~/.local/bin/mesh` (chmod 755 — dispatcher único da CLI) | overwrite |
 | `config/mesh-status.conf.example` | `~/.config/dotfiles/mesh-status.conf` | **once** |
 | `scripts/auto-update.conf.example` | `~/.config/dotfiles/auto-update.conf` | **once** |
@@ -100,6 +105,8 @@ bash install.sh             # aplicar
 | `shell/zinit-uninstall.list` | _(lido in-place; não é deployado)_ | drift cleanup |
 
 > `shell/zinit-uninstall.list` é consumido durante `bash install.sh` para purgar o cache do zinit de qualquer plugin que você parou de carregar do `shell/zshrc.local`. Ver [Removendo plugins zinit](#removendo-plugins-zinit-drift-cleanup) abaixo.
+>
+> `scripts/doctor.sh` reporta drift entre fontes do repo e arquivos deployados. Ver [Detecção de drift — `doctor.sh`](#detecção-de-drift--doctorsh) abaixo.
 
 ### O que o template NÃO gerencia (vem do `dev-bootstrap`)
 
@@ -160,6 +167,31 @@ Para resolver isso de forma limpa:
 3. Rode `bash install.sh`. O script faz `rm -rf` no diretório de cache de cada entrada (idempotente — silencioso quando já está ausente).
 
 Formato e racional documentados dentro do arquivo. Companion ao `lib/uninstall.sh` do `dev-bootstrap` (que cobre o lado brew/apt/clone da mesma aposentadoria, quando o plugin foi instalado por um topic).
+
+## Detecção de drift — `doctor.sh`
+
+Depois que `bash install.sh` deploya arquivos, edits divergem com o tempo — `htop` reescreve seu config quando você muda settings na UI, você tweaka `~/.zshrc.local` direto em vez de no repo, um instalador sobrescreve `~/.bashrc`, etc. `doctor.sh` é um detector de drift sem dependências externas que percorre seu `MAPPINGS` e reporta por arquivo:
+
+- ✓ **up to date** — src do repo e dst deployado batem byte-a-byte
+- ! **missing** — `install.sh` nunca rodou, ou você deletou o arquivo
+- ✗ **drifted** — dst existe mas difere do src (próximo `install.sh` vai sobrescrever)
+- ! **marker miss** — `~/.bashrc`/`~/.zshrc`/`~/.tmux.conf` não carregam o header `managed by dev-bootstrap` (editado à mão ou deployado por outra ferramenta)
+
+```bash
+bash ~/dotfiles/scripts/doctor.sh             # report human-readable
+bash ~/dotfiles/scripts/doctor.sh --quiet     # só drift/missing
+bash ~/dotfiles/scripts/doctor.sh --json      # estruturado (pra automação)
+```
+
+Exit code é **0** quando limpo, **1** quando achou drift ou faltando — você pode plugar num pre-commit hook ou check de CI.
+
+**Overrides** (forks que não usam dev-bootstrap como instalador):
+
+```bash
+DOCTOR_MARKER_FILES="$HOME/.zshrc"  \
+DOCTOR_MARKER_STRING="managed by chezmoi"  \
+bash scripts/doctor.sh
+```
 
 ## mesh CLI — manutenção cross-machine
 
@@ -239,6 +271,7 @@ GitHub Templates criam repos **sem história compartilhada** com o original, ent
 | `v2026-04-20` | Nova pasta `claude/` com manifest + stignore + scripts de sync/merge. `install.sh` ganha 3 MAPPINGS. |
 | `v2026-04-30` | Novo `shell/zinit-uninstall.list.example` + `install.sh` consome para purgar cache de plugins zinit aposentados. Mecanismo genérico — sem opinião sobre quais plugins você usa. Companion do novo `lib/uninstall.sh` do `dev-bootstrap` (cobre lado brew/apt/clone). |
 | `v2026-05-02` | **mesh CLI**: comando unificado `mesh` consolida o quarteto antigo bup/dotup/mesh-snap/mesh-status que vivia em forks privados. Engine de auto-update + collector mesh-snap + viewer mesh-status migram do dotfiles privado pra dentro do template (todos os forks se beneficiam). Novos mappings: `scripts/mesh`, `config/mesh-status.conf.example`, `scripts/auto-update.conf.example`, `shell/auto-update.zsh.example`. 80/80 testes em 6 suítes. Ver seção "mesh CLI — manutenção cross-machine" acima. |
+| `v2026-05-04` | **D45 — migração de template-features**: `scripts/doctor.sh` (detector de drift com overrides `DOCTOR_MARKER_*`), trio de replicação de plugins Claude (`claude-snapshot` / `claude-replicate` / `claude-promote`), `claude/manifest/shared.json.example` (deployado em once-mode) + skeleton `claude/manifest/snapshots/` + `claude/manifest/README.md`, `shell/mesh-guard.zsh` + `shell/mesh-repos.list.example` (opt-in via existência de arquivo), bloco de ativação em `shell/aliases.sh.example`. 4 novos MAPPINGS, 7 novos arquivos. Reimplementa o subset relevante do PR D41 originalmente stale sobre o main com mesh-cli + camada-4. |
 
 ## Docs
 

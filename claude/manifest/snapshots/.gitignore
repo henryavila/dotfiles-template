@@ -1,0 +1,6 @@
+# Per-host snapshots leak hostname + locally-enabled plugin list.
+# Default: do NOT commit them. Override with ALLOW_SNAPSHOT_COMMIT=1 if your
+# fork is private and you specifically want machine-by-machine reproducibility
+# in git history.
+*.json
+!.gitkeep

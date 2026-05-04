@@ -79,3 +79,22 @@
 #     local root="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 #     code "$root"
 # }
+
+# =====================================================================
+# Optional: mesh-guard — multi-machine / multi-repo Claude Code helper
+# =====================================================================
+# When you `cd` into a sibling repo (template, work project, etc.) and run
+# `claude`, the session loads with no memory/PROJECT_STATUS context. The
+# mesh-guard wrapper detects that and offers to redirect you to your main
+# dotfiles repo first.
+#
+# Activation (opt-in):
+#   1. cp shell/mesh-repos.list.example shell/mesh-repos.list
+#   2. Edit shell/mesh-repos.list — list one repo path per line
+#   3. Uncomment the source line below
+#
+# When mesh-repos.list is absent, the wrapper is a no-op pass-through.
+#
+# DOTFILES_DIR_LOCAL="${DOTFILES_DIR:-$HOME/dotfiles}"
+# [[ -n "${ZSH_VERSION:-}" ]] && [[ -f "$DOTFILES_DIR_LOCAL/shell/mesh-guard.zsh" ]] && \
+#     source "$DOTFILES_DIR_LOCAL/shell/mesh-guard.zsh"

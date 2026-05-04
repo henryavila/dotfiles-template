@@ -93,6 +93,11 @@ bash install.sh             # apply
 | `claude/manifest/mcps-user.sh` | `~/.claude/manifest/mcps-user.sh` | overwrite |
 | `claude/stignore/claude-config.stignore` | `~/.claude/.stignore` (controls Syncthing under `~/.claude/`) | overwrite |
 | `claude/stignore/claude-mem.stignore` | `~/.claude-mem/.stignore` | overwrite |
+| `claude/scripts/claude-snapshot.sh` | `~/.local/bin/claude-snapshot` (chmod 755 — plugin manifest snapshot) | overwrite |
+| `claude/scripts/claude-replicate.sh` | `~/.local/bin/claude-replicate` (chmod 755 — apply manifest on a peer) | overwrite |
+| `claude/scripts/claude-promote.sh` | `~/.local/bin/claude-promote` (chmod 755 — promote a snapshot to `shared.json`) | overwrite |
+| `claude/manifest/shared.json` | `~/.claude/manifest/shared.json` | **once** |
+| `scripts/doctor.sh` | _(invoked from repo: `bash ~/dotfiles/scripts/doctor.sh`)_ | drift detector |
 | `scripts/mesh` | `~/.local/bin/mesh` (chmod 755 — unified CLI dispatcher) | overwrite |
 | `config/mesh-status.conf.example` | `~/.config/dotfiles/mesh-status.conf` | **once** |
 | `scripts/auto-update.conf.example` | `~/.config/dotfiles/auto-update.conf` | **once** |
@@ -100,6 +105,8 @@ bash install.sh             # apply
 | `shell/zinit-uninstall.list` | _(read in-place; not deployed)_ | drift cleanup |
 
 > `shell/zinit-uninstall.list` is consumed during `bash install.sh` to purge the zinit plugin cache for any plugin you stopped loading from `shell/zshrc.local`. See [Removing zinit plugins](#removing-zinit-plugins-drift-cleanup) below.
+>
+> `scripts/doctor.sh` reports drift between repo sources and deployed files. See [Drift detection — `doctor.sh`](#drift-detection--doctorsh) below.
 
 ### What this template does NOT manage (comes from `dev-bootstrap`)
 
@@ -160,6 +167,31 @@ To handle this cleanly:
 3. Run `bash install.sh`. The script does `rm -rf` on the cache dir for each entry (idempotent — silent when already absent).
 
 Format and rationale are documented inside the file. Companion to `dev-bootstrap`'s `lib/uninstall.sh` (which handles the brew/apt/clone side of the same retirement when the plugin was installed by a topic).
+
+## Drift detection — `doctor.sh`
+
+After `bash install.sh` deploys files, edits drift over time — `htop` rewrites its config when you change settings in its UI, you tweak `~/.zshrc.local` directly instead of in the repo, an installer overwrites `~/.bashrc`, etc. `doctor.sh` is a zero-dependency drift detector that walks your `MAPPINGS` and reports per file:
+
+- ✓ **up to date** — repo src and deployed dst match byte-for-byte
+- ! **missing** — `install.sh` never ran, or you deleted the file
+- ✗ **drifted** — dst exists but differs from src (next `install.sh` run will overwrite)
+- ! **marker miss** — `~/.bashrc`/`~/.zshrc`/`~/.tmux.conf` don't carry the `managed by dev-bootstrap` header (hand-edited or deployed by another tool)
+
+```bash
+bash ~/dotfiles/scripts/doctor.sh             # human-readable report
+bash ~/dotfiles/scripts/doctor.sh --quiet     # only drift/missing lines
+bash ~/dotfiles/scripts/doctor.sh --json      # structured (for automation)
+```
+
+Exit code is **0** when clean, **1** when drift or missing files were found — wire it into a pre-commit hook or CI check if you want.
+
+**Override knobs** (forks not using dev-bootstrap as installer):
+
+```bash
+DOCTOR_MARKER_FILES="$HOME/.zshrc"  \
+DOCTOR_MARKER_STRING="managed by chezmoi"  \
+bash scripts/doctor.sh
+```
 
 ## mesh CLI — cross-machine maintenance
 
@@ -241,6 +273,7 @@ GitHub Templates create repos **without shared history** with the original, so `
 | (untagged, 2026-04-23) | `shell/aliases.sh.example` slimmed down — everything generic (navigation, shortcuts, Laravel, tmux, Tailscale, Phase E CLI replacements) now ships in dev-bootstrap topic fragments. Example file focuses on **overrides** and **personal-only** additions, with commented templates showing the two categories separately. |
 | `v2026-04-30` | New `shell/zinit-uninstall.list.example` + `install.sh` consumes it to purge zinit plugin cache for retired plugins. Generic mechanism — not opinionated about which plugins you use. Companion to `dev-bootstrap`'s new `lib/uninstall.sh` (handles brew/apt/clone side). |
 | `v2026-05-02` | **mesh CLI**: unified `mesh` command consolidates the previous bup/dotup/mesh-snap/mesh-status quartet from private forks. Auto-update engine + mesh-snap collector + mesh-status viewer migrate from private dotfiles into the template (so all forks benefit). New mappings: `scripts/mesh`, `config/mesh-status.conf.example`, `scripts/auto-update.conf.example`, `shell/auto-update.zsh.example`. 80/80 tests across 6 suites. See "mesh CLI — cross-machine maintenance" section above. |
+| `v2026-05-04` | **D45 — template-features migration**: `scripts/doctor.sh` (drift detector with `DOCTOR_MARKER_*` overrides), Claude plugin replication trio (`claude-snapshot` / `claude-replicate` / `claude-promote`), `claude/manifest/shared.json.example` (deployed once-mode) + `claude/manifest/snapshots/` skeleton + `claude/manifest/README.md`, `shell/mesh-guard.zsh` + `shell/mesh-repos.list.example` (opt-in via file existence), `shell/aliases.sh.example` activation block. 4 new MAPPINGS, 7 new files. Re-implements the relevant subset of the originally-stale D41 PR on top of mesh-cli + camada-4 main. |
 
 ## Docs
 
