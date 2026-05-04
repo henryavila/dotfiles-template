@@ -51,7 +51,6 @@ if [[ "$NAME" != *"@"* ]]; then
     NAME="$FULL"
 fi
 
-PLUGIN_NAME="${NAME%@*}"
 MARKET_NAME="${NAME#*@}"
 
 # ── Already in shared? ─────────────────────────────────────────────────
