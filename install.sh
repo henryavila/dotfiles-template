@@ -39,6 +39,12 @@ MAPPINGS=(
     "claude/manifest/mcps-user.sh|$HOME/.claude/manifest/mcps-user.sh"
     "claude/stignore/claude-config.stignore|$HOME/.claude/.stignore"
     "claude/stignore/claude-mem.stignore|$HOME/.claude-mem/.stignore"
+    # Plugin replication trio (manifest-based; alternative to Phase 6 Syncthing
+    # for ~/.claude/. See claude/manifest/README.md for the workflow).
+    "claude/scripts/claude-snapshot.sh|$HOME/.local/bin/claude-snapshot"
+    "claude/scripts/claude-replicate.sh|$HOME/.local/bin/claude-replicate"
+    "claude/scripts/claude-promote.sh|$HOME/.local/bin/claude-promote"
+    "claude/manifest/shared.json|$HOME/.claude/manifest/shared.json|once"
     "scripts/mesh|$HOME/.local/bin/mesh"
     "config/mesh-status.conf.example|$HOME/.config/dotfiles/mesh-status.conf|once"
     "scripts/auto-update.conf.example|$HOME/.config/dotfiles/auto-update.conf|once"
