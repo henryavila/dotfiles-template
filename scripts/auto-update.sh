@@ -6,11 +6,14 @@
 # Usage:
 #   bash scripts/auto-update.sh                     manual run, all repos, incremental
 #   bash scripts/auto-update.sh --from-shell-start  hook invocation (allows auto-exec)
-#   bash scripts/auto-update.sh --repo NAME         restrict to repo ~/NAME (used by bup/dotup wrappers)
-#   bash scripts/auto-update.sh --full              force full apply: bash bootstrap.sh / install.sh
+#   bash scripts/auto-update.sh -o|--only NAME      restrict to repo NAME (dev-bootstrap | dotfiles)
+#   bash scripts/auto-update.sh -f|--full           force full apply: bash bootstrap.sh / install.sh
 #                                                   ignoring last-applied diff
+#   bash scripts/auto-update.sh -i|--interactive    in --full + dev-bootstrap, run bootstrap.sh
+#                                                   WITHOUT --non-interactive (i.e. show the menu).
+#                                                   Silently ignored for dotfiles or incremental runs.
 #   bash scripts/auto-update.sh --reset-auth        clear auth-failed-* flags and exit
-#   bash scripts/auto-update.sh --help              this help
+#   bash scripts/auto-update.sh -h|--help           this help
 #
 # Exit codes:
 #   0  no work, or successful apply across all repos
@@ -52,26 +55,28 @@ STATE_DIR="${AUTO_UPDATE_STATE_DIR:-$HOME/.local/state/dev-bootstrap}"
 FROM_SHELL_START=0
 RESET_AUTH=0
 FULL=0
-REPO_FILTER=""
+INTERACTIVE=0
+ONLY=""
 while (( $# > 0 )); do
     case "$1" in
         --from-shell-start) FROM_SHELL_START=1 ;;
         --reset-auth)       RESET_AUTH=1 ;;
-        --full)             FULL=1 ;;
-        --repo)
+        --full|-f)          FULL=1 ;;
+        --interactive|-i)   INTERACTIVE=1 ;;
+        --only|-o)
             shift
-            REPO_FILTER="${1:-}"
-            # Reject empty AND flag-like values (e.g. `--repo --full` would
+            ONLY="${1:-}"
+            # Reject empty AND flag-like values (e.g. `--only --full` would
             # otherwise consume `--full` as the repo name and emit a confusing
-            # "did not match" warning).
-            if [[ -z "$REPO_FILTER" || "$REPO_FILTER" == --* ]]; then
-                echo "auto-update: --repo requires a repo name (e.g. dev-bootstrap, dotfiles)" >&2
+            # "did not match" warning). Both long and short forms route here.
+            if [[ -z "$ONLY" || "$ONLY" == -* ]]; then
+                echo "auto-update: -o/--only requires a repo name (e.g. dev-bootstrap, dotfiles)" >&2
                 exit 1
             fi
             ;;
         --help|-h)
             # Fail loud if we can't read $0 — silent empty help would mislead.
-            if ! sed -n '2,20p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; then
+            if ! sed -n '2,25p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; then
                 echo "auto-update: cannot read self for --help (\$0=$0)" >&2
                 exit 1
             fi
@@ -94,12 +99,11 @@ if ! mkdir -p "$STATE_DIR" 2>/dev/null; then
 fi
 
 if (( RESET_AUTH )); then
-    # Honor --repo when set: only clear that domain's flag (matches the
-    # wrappers' advertised contract — bup --reset-auth shouldn't touch
-    # dotfiles auth state and vice versa).
-    if [[ -n "$REPO_FILTER" ]]; then
-        rm -f "$STATE_DIR/auth-failed-$REPO_FILTER"
-        echo "auto-update: cleared auth-failed flag for $REPO_FILTER"
+    # Honor -o/--only when set: only clear that domain's flag — `mesh update
+    # -o dev-bootstrap --reset-auth` shouldn't touch dotfiles auth state.
+    if [[ -n "$ONLY" ]]; then
+        rm -f "$STATE_DIR/auth-failed-$ONLY"
+        echo "auto-update: cleared auth-failed flag for $ONLY"
     else
         rm -f "$STATE_DIR"/auth-failed-*
         echo "auto-update: cleared auth-failed flags"
@@ -171,16 +175,12 @@ _uname_suffix() {
     esac
 }
 
-# Wrapper name to suggest in user-facing messages, by domain. Keeps `bup`
-# (system) and `dotup` (preferences) advice aligned with the actual repo
-# the message is about — D38 split would otherwise leak through with
-# stale "rode `dotup`" hints when the repo is dev-bootstrap.
+# Canonical retry hint for user-facing messages. The old `bup`/`dotup`
+# wrappers were retired in D41 (mesh-cli refactor); messages now point at
+# the unified `mesh update -o <repo>` form so the suggestion matches what
+# the user actually has on PATH.
 wrapper_for() {
-    case "$1" in
-        dev-bootstrap) echo "bup" ;;
-        dotfiles)      echo "dotup" ;;
-        *)             echo "auto-update.sh --repo $1" ;;
-    esac
+    echo "mesh update -o $1"
 }
 
 # Detect timeout(1) — Linux ships `timeout`, macOS may ship `gtimeout` via
@@ -307,7 +307,17 @@ process_repo() {
             return 1
         fi
         if [[ "$name" == "dev-bootstrap" ]]; then
-            if ! bash "$repo/bootstrap.sh" --non-interactive 2>&1 | sed 's/^/    /'; then
+            # -i/--interactive drops --non-interactive so bootstrap.sh shows
+            # its whiptail menu (used to validate new opt-ins like postgres
+            # without committing config.env tweaks first). Default stays
+            # automated so the shell-start hook never blocks on a prompt.
+            local bootstrap_args=()
+            if (( ! INTERACTIVE )); then
+                bootstrap_args+=("--non-interactive")
+            else
+                notice "$name: --interactive — bootstrap.sh será rodado com menu (sem --non-interactive)"
+            fi
+            if ! bash "$repo/bootstrap.sh" "${bootstrap_args[@]+"${bootstrap_args[@]}"}" 2>&1 | sed 's/^/    /'; then
                 warn "$name: bootstrap.sh --full falhou — last-applied NÃO bumped"
                 return 1
             fi
@@ -533,16 +543,16 @@ process_repo() {
 }
 
 # ─── Main loop ──────────────────────────────────────────────────────
-# --repo NAME restricts processing to ~/NAME (matched against the configured
-# AUTO_UPDATE_REPOS array). Used by bup/dotup wrappers to scope each command
-# to its domain (system vs personal). Unfiltered runs (e.g. shell-start hook)
-# still cover all repos.
+# -o/--only NAME restricts processing to that repo (matched against the basename
+# of each entry in AUTO_UPDATE_REPOS). Used by `mesh update -o <repo>` to scope
+# each invocation. Unfiltered runs (e.g. shell-start hook, `mesh update`) still
+# cover all repos.
 #
 # EXIT_RC is the script's overall outcome:
 #   0  no work, or all per-repo work succeeded
 #   1  any process_repo returned non-zero (e.g. --full bootstrap.sh failed),
-#      or --repo NAME did not match anything, or no repos configured.
-# Honest exit codes matter for `bup --full && dotup --full` — without this
+#      or -o/--only NAME did not match anything, or no repos configured.
+# Honest exit codes matter for piped composition — without this
 # the user's `&&` composition would silently mask first-stage failures.
 EXIT_RC=0
 
@@ -552,21 +562,21 @@ if (( ${#AUTO_UPDATE_REPOS[@]} == 0 )); then
 fi
 
 for repo in "${AUTO_UPDATE_REPOS[@]}"; do
-    if [[ -n "$REPO_FILTER" && "$(basename "$repo")" != "$REPO_FILTER" ]]; then
+    if [[ -n "$ONLY" && "$(basename "$repo")" != "$ONLY" ]]; then
         continue
     fi
     process_repo "$repo" || { warn "process_repo failed for $repo (continuing)"; EXIT_RC=1; }
 done
 
-if [[ -n "$REPO_FILTER" ]]; then
-    # Sanity check: --repo NAME must match at least one configured repo.
-    # Typo `--repo dotfile` is a user error — fail loud, NOT silent exit 0.
+if [[ -n "$ONLY" ]]; then
+    # Sanity check: -o/--only NAME must match at least one configured repo.
+    # Typo `-o dotfile` is a user error — fail loud, NOT silent exit 0.
     matched=0
     for repo in "${AUTO_UPDATE_REPOS[@]}"; do
-        [[ "$(basename "$repo")" == "$REPO_FILTER" ]] && matched=1
+        [[ "$(basename "$repo")" == "$ONLY" ]] && matched=1
     done
     if (( ! matched )); then
-        err "auto-update: --repo $REPO_FILTER did not match any configured repo (AUTO_UPDATE_REPOS in $CONF)"
+        err "auto-update: -o/--only $ONLY did not match any configured repo (AUTO_UPDATE_REPOS in $CONF)"
         EXIT_RC=1
     fi
 fi

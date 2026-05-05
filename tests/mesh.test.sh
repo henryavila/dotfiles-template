@@ -178,52 +178,90 @@ test_snap_passthrough() {
 
 # ─── Update subcommand ─────────────────────────────────────────────
 
-test_update_no_repo_runs_both() {
+test_update_no_only_runs_both() {
     local out; out=$(_run update)
     local lines; lines=$(echo "$out" | grep -c "MOTOR:")
     if (( lines == 2 )) && \
-       echo "$out" | grep -q "MOTOR: --repo dev-bootstrap" && \
-       echo "$out" | grep -q "MOTOR: --repo dotfiles"; then
-        _pass "mesh update (no repo) runs motor twice (dev-bootstrap + dotfiles)"
+       echo "$out" | grep -q "MOTOR: --only dev-bootstrap" && \
+       echo "$out" | grep -q "MOTOR: --only dotfiles"; then
+        _pass "mesh update (no -o) runs motor twice (dev-bootstrap + dotfiles)"
     else
-        _fail "update without repo did not run both" "$out"
+        _fail "update without -o did not run both" "$out"
     fi
 }
 
-test_update_bootstrap_alias() {
-    local out; out=$(_run update bootstrap)
-    if echo "$out" | grep -q "MOTOR: --repo dev-bootstrap" && ! echo "$out" | grep -q "MOTOR: --repo dotfiles"; then
-        _pass "mesh update bootstrap → motor --repo dev-bootstrap (alias works, single-repo)"
+test_update_only_long_form() {
+    local out; out=$(_run update --only dev-bootstrap)
+    if echo "$out" | grep -q "MOTOR: --only dev-bootstrap" && ! echo "$out" | grep -q "MOTOR: --only dotfiles"; then
+        _pass "mesh update --only dev-bootstrap → motor --only dev-bootstrap (single-repo)"
     else
-        _fail "bootstrap alias dispatch wrong" "$out"
+        _fail "--only long form dispatch wrong" "$out"
     fi
 }
 
-test_update_dev_bootstrap_literal() {
-    local out; out=$(_run update dev-bootstrap)
-    if echo "$out" | grep -q "MOTOR: --repo dev-bootstrap"; then
-        _pass "mesh update dev-bootstrap (literal name) accepted"
+test_update_only_short_form() {
+    local out; out=$(_run update -o dev-bootstrap)
+    if echo "$out" | grep -q "MOTOR: --only dev-bootstrap" && ! echo "$out" | grep -q "MOTOR: --only dotfiles"; then
+        _pass "mesh update -o dev-bootstrap (short form) is equivalent to --only"
     else
-        _fail "literal dev-bootstrap not accepted" "$out"
+        _fail "-o short form dispatch wrong" "$out"
     fi
 }
 
-test_update_dotfiles() {
-    local out; out=$(_run update dotfiles --full)
-    if echo "$out" | grep -q "MOTOR: --repo dotfiles --full"; then
-        _pass "mesh update dotfiles --full → motor with both args forwarded"
+test_update_bootstrap_brevity_alias() {
+    # `bootstrap` is accepted as a brevity alias for `dev-bootstrap`. The
+    # dispatcher translates it to the canonical name before forwarding,
+    # so the motor never sees the alias.
+    local out; out=$(_run update -o bootstrap)
+    if echo "$out" | grep -q "MOTOR: --only dev-bootstrap" && ! echo "$out" | grep -q "MOTOR: --only bootstrap\b"; then
+        _pass "-o bootstrap → motor --only dev-bootstrap (brevity alias translated)"
     else
-        _fail "dotfiles + --full dispatch wrong" "$out"
+        _fail "bootstrap brevity alias not translated" "$out"
     fi
 }
 
-test_update_unknown_repo_fails() {
+test_update_dotfiles_with_full_short() {
+    # -f/--full is forwarded as --full, -i/--interactive as --interactive.
+    # Both short forms exercised here in one go to keep the test focused.
+    local out; out=$(_run update -o dotfiles -f)
+    if echo "$out" | grep -q "MOTOR: --only dotfiles --full"; then
+        _pass "-o dotfiles -f → motor --only dotfiles --full"
+    else
+        _fail "dotfiles + -f dispatch wrong" "$out"
+    fi
+}
+
+test_update_full_and_interactive_forwarded() {
+    local out; out=$(_run update -o bootstrap -f -i)
+    if echo "$out" | grep -q "MOTOR: --only dev-bootstrap --full --interactive"; then
+        _pass "-f and -i both forwarded to motor as --full --interactive"
+    else
+        _fail "full+interactive dispatch wrong" "$out"
+    fi
+}
+
+test_update_only_requires_value() {
+    # `-o --full` would otherwise consume --full as the repo name.
     local out rc
-    out=$(_run update tmpl 2>&1); rc=$?
-    if (( rc != 0 )) && echo "$out" | grep -q "unknown arg"; then
-        _pass "mesh update <unknown-repo> exits non-zero with error"
+    out=$(_run update -o --full 2>&1); rc=$?
+    if (( rc != 0 )) && echo "$out" | grep -q "requires a repo name"; then
+        _pass "-o rejects flag-like value (--full)"
     else
-        _fail "update with unknown repo did not fail loud (rc=$rc)" "$out"
+        _fail "-o --full not rejected (rc=$rc)" "$out"
+    fi
+}
+
+test_update_unknown_arg_fails() {
+    # Positional `bootstrap` was removed in the redesign — anything that
+    # isn't a known flag (`-o`/`--only`/`-f`/`--full`/`-i`/`--interactive`/
+    # passthrough flag) is rejected. Catches typos like
+    # `mesh update boostrap` (missing `t`).
+    local out rc
+    out=$(_run update boostrap 2>&1); rc=$?
+    if (( rc != 0 )) && echo "$out" | grep -q "unknown arg"; then
+        _pass "mesh update <typo> exits non-zero with error"
+    else
+        _fail "unknown arg did not fail loud (rc=$rc)" "$out"
     fi
 }
 
@@ -273,11 +311,14 @@ test_status_flag_passthrough
 test_status_positional_with_flag
 test_top_level_flag_falls_to_status
 test_snap_passthrough
-test_update_no_repo_runs_both
-test_update_bootstrap_alias
-test_update_dev_bootstrap_literal
-test_update_dotfiles
-test_update_unknown_repo_fails
+test_update_no_only_runs_both
+test_update_only_long_form
+test_update_only_short_form
+test_update_bootstrap_brevity_alias
+test_update_dotfiles_with_full_short
+test_update_full_and_interactive_forwarded
+test_update_only_requires_value
+test_update_unknown_arg_fails
 test_unknown_subcommand_fails
 test_missing_companion_fails_loud
 

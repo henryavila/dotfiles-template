@@ -62,9 +62,14 @@ git init --quiet --initial-branch=main "$LOCAL"
 } > "$CONF"
 
 # Helpers
+# AUTO_UPDATE_LOCAL_CONF is pinned to a non-existent path so any real
+# `~/.config/dotfiles/auto-update.conf.local` on the developer's machine
+# (M2 has one) doesn't leak in via the motor's per-host override fallback
+# and silently override AUTO_UPDATE_REPOS away from the fixture.
 _run() {
-    AUTO_UPDATE_CONF="$CONF" AUTO_UPDATE_STATE_DIR="$STATE" NO_COLOR=1 \
-        bash "$SCRIPT" "$@" 2>&1
+    AUTO_UPDATE_CONF="$CONF" AUTO_UPDATE_STATE_DIR="$STATE" \
+        AUTO_UPDATE_LOCAL_CONF="$TESTROOT/never-exists.conf.local" \
+        NO_COLOR=1 bash "$SCRIPT" "$@" 2>&1
 }
 
 _reset() {
@@ -241,46 +246,69 @@ test_pending_sudo_silent() {
     fi
 }
 
-test_repo_filter_match() {
-    # --repo NAME where NAME matches a configured repo basename — same outcome as no filter.
+test_only_match() {
+    # -o/--only NAME where NAME matches a configured repo basename — same outcome as no filter.
     _reset
     ( cd "$LOCAL" && git rev-parse HEAD ) > "$STATE/last-applied-$NAME"
     _push_via_sidecar "match-test" "newfile-filter-match" "filter match"
-    local out; out=$(_run --repo "$NAME")
+    local out; out=$(_run --only "$NAME")
     if [[ -f "$LOCAL/newfile-filter-match" ]] && echo "$out" | grep -q "atualizado"; then
-        _pass "--repo NAME matches and processes the configured repo"
+        _pass "--only NAME matches and processes the configured repo"
     else
-        _fail "--repo NAME match failed" "$out"
+        _fail "--only NAME match failed" "$out"
     fi
 }
 
-test_repo_filter_miss() {
-    # --repo BOGUS errors with non-zero exit and does not process anything.
-    # Exit-code assertion matters: a typo (`bup --repo dotfile`) silently
-    # returning 0 would let `bup --repo dotfile && dotup` proceed as if
-    # bup had succeeded.
+test_only_short_form() {
+    # -o is the short alias of --only. Same behavior as the long form above.
+    # Anchored separately so a regression that breaks short→long mapping in
+    # the arg parser fails this test even if --only stays green.
+    _reset
+    ( cd "$LOCAL" && git rev-parse HEAD ) > "$STATE/last-applied-$NAME"
+    _push_via_sidecar "short-form" "newfile-short-form" "short form"
+    local out; out=$(_run -o "$NAME")
+    if [[ -f "$LOCAL/newfile-short-form" ]] && echo "$out" | grep -q "atualizado"; then
+        _pass "-o NAME (short form) is equivalent to --only NAME"
+    else
+        _fail "-o NAME short form regressed" "$out"
+    fi
+}
+
+test_only_miss() {
+    # -o/--only BOGUS errors with non-zero exit and does not process anything.
+    # Exit-code assertion matters: a typo silently returning 0 would let
+    # `mesh update -o dotfile && other-cmd` proceed as if it had succeeded.
     _reset
     ( cd "$LOCAL" && git rev-parse HEAD ) > "$STATE/last-applied-$NAME"
     _push_via_sidecar "miss-test" "newfile-should-not-pull" "filter miss"
     local out rc
-    out=$(_run --repo nonexistent-repo); rc=$?
+    out=$(_run --only nonexistent-repo); rc=$?
     if (( rc != 0 )) && echo "$out" | grep -q "did not match" && \
        [[ ! -f "$LOCAL/newfile-should-not-pull" ]]; then
-        _pass "--repo BOGUS warns, exits non-zero, and skips processing"
+        _pass "--only BOGUS warns, exits non-zero, and skips processing"
     else
-        _fail "--repo miss did not exit non-zero / not warn / pulled anyway (rc=$rc)" "$out"
+        _fail "--only miss did not exit non-zero / not warn / pulled anyway (rc=$rc)" "$out"
     fi
 }
 
-test_repo_filter_rejects_flag_value() {
-    # `--repo --full` would otherwise consume `--full` as the repo name.
+test_only_rejects_flag_value() {
+    # `-o --full` (and likewise --only --full) would otherwise consume --full
+    # as the repo name. Both forms route through the same parser branch but
+    # we exercise both to pin the short→long routing too.
     _reset
     local out rc
-    out=$(_run --repo --full); rc=$?
+    out=$(_run --only --full); rc=$?
     if (( rc != 0 )) && echo "$out" | grep -q "requires a repo name"; then
-        _pass "--repo rejects flag-like value (--full)"
+        _pass "--only rejects flag-like value (--full)"
     else
-        _fail "--repo --full not rejected (rc=$rc)" "$out"
+        _fail "--only --full not rejected (rc=$rc)" "$out"
+        return
+    fi
+    out=$(_run -o -f); rc=$?
+    if (( rc != 0 )) && echo "$out" | grep -q "requires a repo name"; then
+        _pass "-o rejects flag-like value (-f)"
+    else
+        _fail "-o -f not rejected (rc=$rc)" "$out"
     fi
 }
 
@@ -296,17 +324,18 @@ test_help_doesnt_lie_silently() {
     fi
 }
 
-test_reset_auth_scoped_to_repo_filter() {
-    # `bup --reset-auth` (i.e. --repo dev-bootstrap --reset-auth) must
-    # only clear dev-bootstrap's flag, not dotfiles'.
+test_reset_auth_scoped_to_only() {
+    # `mesh update -o dev-bootstrap --reset-auth` (i.e. --only dev-bootstrap
+    # --reset-auth at the motor level) must only clear dev-bootstrap's flag,
+    # not dotfiles'.
     _reset
     touch "$STATE/auth-failed-dev-bootstrap" "$STATE/auth-failed-dotfiles"
-    _run --repo dev-bootstrap --reset-auth >/dev/null 2>&1 || true
+    _run --only dev-bootstrap --reset-auth >/dev/null 2>&1 || true
     if [[ ! -f "$STATE/auth-failed-dev-bootstrap" ]] && \
        [[ -f "$STATE/auth-failed-dotfiles" ]]; then
-        _pass "--reset-auth honors --repo (clears only that domain)"
+        _pass "--reset-auth honors --only (clears only that domain)"
     else
-        _fail "--reset-auth ignored --repo or over-cleared"
+        _fail "--reset-auth ignored --only or over-cleared"
     fi
 }
 
@@ -324,7 +353,8 @@ test_empty_repos_array_fails_loud() {
         echo ': "${AUTO_UPDATE_SUDO_REGEX:=\\b(sudo)\\b}"'
     } > "$empty_conf"
     local out rc
-    out=$(AUTO_UPDATE_CONF="$empty_conf" AUTO_UPDATE_STATE_DIR="$STATE" NO_COLOR=1 \
+    out=$(AUTO_UPDATE_CONF="$empty_conf" AUTO_UPDATE_STATE_DIR="$STATE" \
+        AUTO_UPDATE_LOCAL_CONF="$TESTROOT/never-exists.conf.local" NO_COLOR=1 \
         bash "$SCRIPT" 2>&1); rc=$?
     if (( rc != 0 )) && echo "$out" | grep -q "AUTO_UPDATE_REPOS is empty"; then
         _pass "empty AUTO_UPDATE_REPOS fails loud"
@@ -384,7 +414,9 @@ _run_full_with_sudo_shim() {
     local sudo_rc="$1"; shift
     local shim; shim="$(_sudo_shim "$sudo_rc")"
     PATH="$shim:$PATH" \
-    AUTO_UPDATE_CONF="$FULL_CONF" AUTO_UPDATE_STATE_DIR="$FULL_STATE" NO_COLOR=1 \
+    AUTO_UPDATE_CONF="$FULL_CONF" AUTO_UPDATE_STATE_DIR="$FULL_STATE" \
+    AUTO_UPDATE_LOCAL_CONF="$TESTROOT/never-exists.conf.local" \
+    NO_COLOR=1 \
         bash "$SCRIPT" "$@" 2>&1
 }
 
@@ -521,8 +553,9 @@ _setup_full_fixture() {
 }
 
 _run_full() {
-    AUTO_UPDATE_CONF="$FULL_CONF" AUTO_UPDATE_STATE_DIR="$FULL_STATE" NO_COLOR=1 \
-        bash "$SCRIPT" "$@" 2>&1
+    AUTO_UPDATE_CONF="$FULL_CONF" AUTO_UPDATE_STATE_DIR="$FULL_STATE" \
+        AUTO_UPDATE_LOCAL_CONF="$TESTROOT/never-exists.conf.local" \
+        NO_COLOR=1 bash "$SCRIPT" "$@" 2>&1
 }
 
 test_full_dotfiles() {
@@ -541,6 +574,87 @@ test_full_dotfiles() {
 }
 
 _OBSOLETE_replaced_by_sudo_shim_variant() { :; }
+
+# ─── --interactive flag wiring ──────────────────────────────────────
+# In `--full` + dev-bootstrap, default behavior is to invoke
+# `bash bootstrap.sh --non-interactive` so the shell-start hook never
+# blocks on a prompt. The new -i/--interactive flag drops that arg so
+# the user can see the whiptail menu (e.g. to validate a new opt-in).
+
+test_default_full_bootstrap_uses_non_interactive() {
+    # Sanity check — default --full path on dev-bootstrap MUST pass
+    # --non-interactive to bootstrap.sh. Mutation-deleting the
+    # `if (( ! INTERACTIVE ))` guard would make this test red.
+    _setup_full_fixture "dev-bootstrap" "bootstrap.sh"
+    # Replace stub with one that records args.
+    cat > "$FULL_LOCAL/bootstrap.sh" <<EOF
+#!/usr/bin/env bash
+echo "args=\$*" > "$FULL_STATE/bootstrap-args.log"
+exit 0
+EOF
+    chmod +x "$FULL_LOCAL/bootstrap.sh"
+    ( cd "$FULL_LOCAL" || exit
+      git -c commit.gpgsign=false commit -q -am "args-recording stub"
+      git push -q origin main )
+
+    _run_full_with_sudo_shim 0 --full >/dev/null
+    local args; args="$(cat "$FULL_STATE/bootstrap-args.log" 2>/dev/null)"
+
+    if echo "$args" | grep -q -- "--non-interactive"; then
+        _pass "default --full passes --non-interactive to bootstrap.sh"
+    else
+        _fail "default --full did NOT pass --non-interactive" "args=$args"
+    fi
+}
+
+test_interactive_drops_non_interactive_in_full_bootstrap() {
+    # Layer B: --full + --interactive on dev-bootstrap must NOT pass
+    # --non-interactive to bootstrap.sh. The whiptail menu only shows
+    # when bootstrap.sh runs without that flag.
+    _setup_full_fixture "dev-bootstrap" "bootstrap.sh"
+    cat > "$FULL_LOCAL/bootstrap.sh" <<EOF
+#!/usr/bin/env bash
+echo "args=\$*" > "$FULL_STATE/bootstrap-args.log"
+exit 0
+EOF
+    chmod +x "$FULL_LOCAL/bootstrap.sh"
+    ( cd "$FULL_LOCAL" || exit
+      git -c commit.gpgsign=false commit -q -am "args-recording stub"
+      git push -q origin main )
+
+    _run_full_with_sudo_shim 0 --full --interactive >/dev/null
+    local args; args="$(cat "$FULL_STATE/bootstrap-args.log" 2>/dev/null)"
+
+    if echo "$args" | grep -q "args=" && ! echo "$args" | grep -q -- "--non-interactive"; then
+        _pass "--interactive drops --non-interactive in --full + dev-bootstrap"
+    else
+        _fail "--interactive did not drop --non-interactive" "args=$args"
+    fi
+}
+
+test_interactive_short_form() {
+    # -i is the short alias of --interactive. Pin both forms route to
+    # the same arg-parser branch.
+    _setup_full_fixture "dev-bootstrap" "bootstrap.sh"
+    cat > "$FULL_LOCAL/bootstrap.sh" <<EOF
+#!/usr/bin/env bash
+echo "args=\$*" > "$FULL_STATE/bootstrap-args.log"
+exit 0
+EOF
+    chmod +x "$FULL_LOCAL/bootstrap.sh"
+    ( cd "$FULL_LOCAL" || exit
+      git -c commit.gpgsign=false commit -q -am "args-recording stub"
+      git push -q origin main )
+
+    _run_full_with_sudo_shim 0 -f -i >/dev/null
+    local args; args="$(cat "$FULL_STATE/bootstrap-args.log" 2>/dev/null)"
+
+    if echo "$args" | grep -q "args=" && ! echo "$args" | grep -q -- "--non-interactive"; then
+        _pass "-i (short form) is equivalent to --interactive"
+    else
+        _fail "-i short form regressed" "args=$args"
+    fi
+}
 
 # ─── Per-host conf.local override + invalid-path diagnostic ─────────
 # Spec: docs/2026-05-05-auto-update-per-host-override-handoff.md
@@ -646,11 +760,12 @@ test_happy_path
 test_reload_shell_rc
 test_followup_summary
 test_pending_sudo_silent
-test_repo_filter_match
-test_repo_filter_miss
-test_repo_filter_rejects_flag_value
+test_only_match
+test_only_short_form
+test_only_miss
+test_only_rejects_flag_value
 test_help_doesnt_lie_silently
-test_reset_auth_scoped_to_repo_filter
+test_reset_auth_scoped_to_only
 test_empty_repos_array_fails_loud
 test_incremental_dotfiles_runs_install_sh
 test_full_dotfiles
@@ -659,6 +774,9 @@ test_full_dev_bootstrap_aborts_when_sudo_cancels
 test_full_dev_bootstrap_runs_bootstrap_when_sudo_ok
 test_lock_blocks_concurrent_run
 test_lock_recovers_stale
+test_default_full_bootstrap_uses_non_interactive
+test_interactive_drops_non_interactive_in_full_bootstrap
+test_interactive_short_form
 test_local_conf_anchored_in_motor
 test_local_conf_override_redirects_repos
 test_invalid_repo_path_emits_notice
