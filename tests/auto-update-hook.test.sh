@@ -1,4 +1,8 @@
 #!/usr/bin/env zsh
+# shellcheck shell=bash
+# (zsh-only at runtime — the bash directive above is just so shellcheck
+# can parse the file. The non-bash bits we use, like `add-zsh-hook`,
+# resolve at runtime under zsh and are invisible to the static checker.)
 # tests/auto-update-hook.test.sh — covers the precmd-deferred hook in
 # shell/auto-update.zsh.
 #

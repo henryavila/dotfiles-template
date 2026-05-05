@@ -40,7 +40,7 @@ mkdir -p "$STATE"
 git init --bare --quiet --initial-branch=main "$UPSTREAM"
 
 git init --quiet --initial-branch=main "$LOCAL"
-( cd "$LOCAL"
+( cd "$LOCAL" || exit
   git config user.email "test@test"
   git config user.name "test"
   git remote add origin "$UPSTREAM"
@@ -69,7 +69,7 @@ _run() {
 
 _reset() {
     rm -f "$STATE"/* 2>/dev/null || true
-    ( cd "$LOCAL"
+    ( cd "$LOCAL" || exit
       git checkout -q main 2>/dev/null || true
       git branch -D experiment 2>/dev/null || true
       git fetch -q origin 2>/dev/null || true
@@ -83,7 +83,7 @@ _push_via_sidecar() {
     local content="$1" path="$2" msg="$3"
     local sc="$TESTROOT/sidecar.$$"
     git clone -q "$UPSTREAM" "$sc"
-    ( cd "$sc"
+    ( cd "$sc" || exit
       git config user.email "other@test"
       git config user.name "other"
       mkdir -p "$(dirname "$path")"
@@ -126,9 +126,9 @@ test_unknown_arg() {
 
 test_branch_skip() {
     _reset
-    ( cd "$LOCAL"; git checkout -q -b experiment )
+    ( cd "$LOCAL" || exit; git checkout -q -b experiment )
     local out; out=$(_run)
-    ( cd "$LOCAL"; git checkout -q main; git branch -D experiment 2>/dev/null || true )
+    ( cd "$LOCAL" || exit; git checkout -q main; git branch -D experiment 2>/dev/null || true )
     if echo "$out" | grep -q "pulado.*experiment"; then
         _pass "non-main branch is skipped with notice"
     else
@@ -173,7 +173,7 @@ test_up_to_date() {
 
 test_ahead_skip() {
     _reset
-    ( cd "$LOCAL"
+    ( cd "$LOCAL" || exit
       git rev-parse HEAD > "$STATE/last-applied-$NAME"
       git -c commit.gpgsign=false commit -q --allow-empty -m "local-only"
     )
@@ -348,7 +348,7 @@ test_incremental_dotfiles_runs_install_sh() {
     # Push a new commit via sidecar.
     local sc="$TESTROOT/sidecar-incr.$$"
     git clone -q "$FULL_UPSTREAM" "$sc"
-    ( cd "$sc"
+    ( cd "$sc" || exit
       git config user.email "other@test"; git config user.name "other"
       echo "diff" > newfile-incr
       git add newfile-incr
@@ -431,7 +431,7 @@ echo "[install.sh stub: simulated failure]"
 exit 1
 EOF
     chmod +x "$FULL_LOCAL/install.sh"
-    ( cd "$FULL_LOCAL"
+    ( cd "$FULL_LOCAL" || exit
       git -c commit.gpgsign=false commit -q -am "fail stub"
       git push -q origin main )
     local out rc
@@ -499,7 +499,7 @@ _setup_full_fixture() {
     mkdir -p "$FULL_STATE"
     git init --bare --quiet --initial-branch=main "$FULL_UPSTREAM"
     git init --quiet --initial-branch=main "$FULL_LOCAL"
-    ( cd "$FULL_LOCAL"
+    ( cd "$FULL_LOCAL" || exit
       git config user.email "test@test"
       git config user.name "test"
       git remote add origin "$FULL_UPSTREAM"

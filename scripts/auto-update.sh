@@ -30,7 +30,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Both paths overridable via env for test fixtures (see tests/auto-update.test.sh).
 CONF="${AUTO_UPDATE_CONF:-$HERE/auto-update.conf}"
 STATE_DIR="${AUTO_UPDATE_STATE_DIR:-$HOME/.local/state/dev-bootstrap}"
-LOCK="$STATE_DIR/update.lock"
+# (Legacy `LOCK="$STATE_DIR/update.lock"` removed — see LOCK_DIR below;
+# the mkdir-based mutex superseded the file-based one and the unused
+# variable was tripping shellcheck SC2034.)
 
 # ─── Args ────────────────────────────────────────────────────────────
 FROM_SHELL_START=0
