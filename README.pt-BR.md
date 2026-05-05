@@ -226,6 +226,13 @@ Dois arquivos de config aterrissam em `~/.config/dotfiles/`:
   `dev-bootstrap` + `dotfiles`). A reload table mapeia paths de shell-rc
   pra ações, então editar `~/.zshrc.local` dispara um aviso de `exec zsh`
   no próximo shell start.
+  - **Override per-host**: crie `~/.config/dotfiles/auto-update.conf.local`
+    (nunca tracked em git, sourced depois do conf principal) quando seus
+    clones moram fora do `$HOME` — e.g. no Mac quando o disco tá em
+    `/Volumes/External/code/dev-bootstrap`. Re-assigne `AUTO_UPDATE_REPOS`
+    lá e deixe o conf principal limpo. Sem isso, `mesh update` agora
+    imprime um aviso visível `pulado: caminho 'X' não é repo git`
+    apontando pro conf que precisa ajustar, ao invés de sair em silêncio.
 
 Pra `mesh status` mostrar dados de máquinas peer, snapshots dos hosts
 precisam replicar via Syncthing. Adicione uma folder apontando pra
