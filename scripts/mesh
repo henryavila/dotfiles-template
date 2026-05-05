@@ -4,9 +4,9 @@
 # Replaces the older quartet `bup` / `dotup` / `mesh-snap` / `mesh-status`
 # with a single command. Subcommands delegate to the underlying motors:
 #
-#   mesh status [<alias>] [flags]   →  scripts/lib/mesh-status (positional → --detail)
-#   mesh snap   [flags]             →  scripts/lib/mesh-snap   (passthrough)
-#   mesh update [<repo>] [flags]    →  scripts/auto-update.sh  (--repo NAME)
+#   mesh status [<alias>] [flags]            →  scripts/lib/mesh-status (positional → --detail)
+#   mesh snap   [flags]                      →  scripts/lib/mesh-snap   (passthrough)
+#   mesh update [-o NAME] [-f] [-i] [flags]  →  scripts/auto-update.sh  (--only / --full / --interactive)
 #
 # Bare `mesh` (no subcommand) renders the cross-mesh dashboard (= `mesh status`).
 #
@@ -62,7 +62,7 @@ Usage:
   mesh                              Show cross-mesh status panel (= mesh status)
   mesh status [<alias>] [flags]     Cross-mesh dashboard; positional drill-down
   mesh snap [flags]                 Generate this host's snapshot
-  mesh update [<repo>] [flags]      Pull and apply updates (incremental)
+  mesh update [-o NAME] [-f] [-i]   Pull and apply updates
   mesh -h | --help                  This help
   mesh -V | --version               Version
 
@@ -72,16 +72,29 @@ Subcommands:
   snap     Refresh this host's snapshot. Hooks call this automatically;
            rarely run by hand. `mesh snap -h` for flags.
   update   Pull commits and re-apply install scripts for one or both repos.
-           Positional <repo> = `bootstrap` (alias for dev-bootstrap) or `dotfiles`.
-           Flags forwarded: --full, --reset-auth, --from-shell-start, etc.
+           Default scope (no -o) = both repos sequentially. Default mode = incremental.
+
+           Flags (lowercase short, GNU long, both accepted):
+             -o, --only NAME         Restrict to NAME (dev-bootstrap | dotfiles).
+                                     `bootstrap` accepted as alias for dev-bootstrap.
+             -f, --full              Full apply (runs bootstrap.sh / install.sh
+                                     instead of incremental diff replay).
+             -i, --interactive       In `-f` + dev-bootstrap, run bootstrap.sh
+                                     WITHOUT --non-interactive (i.e. show the menu).
+                                     Silently ignored for dotfiles or incremental runs.
+
+           Passthrough flags: --reset-auth, --from-shell-start.
 
 Examples:
   mesh                              Open the panel
   mesh status crc                   Drill-down on host 'crc'
   mesh status --write               Refresh §3 of PROJECT_STATUS.md
-  mesh update                       Update both dev-bootstrap and dotfiles
-  mesh update bootstrap --full      Force full bootstrap re-run
-  mesh update dotfiles              Just update personal dotfiles
+  mesh update                       Both repos, incremental
+  mesh update -f                    Both repos, full apply
+  mesh update -o bootstrap          Only dev-bootstrap, incremental
+  mesh update -o bootstrap -f       Only dev-bootstrap, full (non-interactive)
+  mesh update -o bootstrap -f -i    Only dev-bootstrap, full, with interactive menu
+  mesh update -o dotfiles           Only dotfiles, incremental
 
 Configuration:
   ~/.config/dotfiles/mesh-status.conf   (alias map, repos tracked, retention)
@@ -125,27 +138,44 @@ sub_update() {
     motor="$(_resolve_companion "auto-update.sh")"
     [[ -n "$motor" ]] || _die "auto-update.sh not found (set \$MESH_HOME or check installation)"
 
-    local target_repo=""
+    # Flags forwarded to the motor verbatim. `-o NAME` / `--only NAME` is
+    # extracted into $only because we use it both for single-target dispatch
+    # and (when empty) for the both-repos fallback below. `bootstrap` is
+    # accepted as a brevity alias for `dev-bootstrap` (the canonical repo name).
+    local only=""
     local pass_args=()
     while (( $# > 0 )); do
         case "$1" in
-            --*|-*) pass_args+=("$1"); shift ;;
-            bootstrap|dev-bootstrap) target_repo="dev-bootstrap"; shift ;;
-            dotfiles) target_repo="dotfiles"; shift ;;
-            *) _die "update: unknown arg '$1' (expected 'bootstrap' | 'dotfiles' | flag)" ;;
+            -o|--only)
+                shift
+                local val="${1:-}"
+                if [[ -z "$val" || "$val" == -* ]]; then
+                    _die "update: -o/--only requires a repo name (dev-bootstrap | dotfiles)"
+                fi
+                [[ "$val" == "bootstrap" ]] && val="dev-bootstrap"
+                only="$val"
+                shift
+                ;;
+            -f|--full)         pass_args+=("--full");        shift ;;
+            -i|--interactive)  pass_args+=("--interactive"); shift ;;
+            --*|-*)            pass_args+=("$1");            shift ;;
+            *)
+                _die "update: unknown arg '$1' (expected -o NAME | -f | -i | passthrough flag)"
+                ;;
         esac
     done
 
-    if [[ -n "$target_repo" ]]; then
-        exec bash "$motor" --repo "$target_repo" "${pass_args[@]+"${pass_args[@]}"}"
+    if [[ -n "$only" ]]; then
+        exec bash "$motor" --only "$only" "${pass_args[@]+"${pass_args[@]}"}"
     fi
 
-    # No target — run both sequentially. Exit code = OR of both rc (any failure
-    # surfaces; user can see which via output). Bash 3.2 safe array expansion.
+    # No -o/--only — run both sequentially. Exit code = OR of both rc (any
+    # failure surfaces; user can see which via output). Bash 3.2 safe array
+    # expansion.
     local bootstrap_rc=0 dotfiles_rc=0
-    bash "$motor" --repo dev-bootstrap "${pass_args[@]+"${pass_args[@]}"}"
+    bash "$motor" --only dev-bootstrap "${pass_args[@]+"${pass_args[@]}"}"
     bootstrap_rc=$?
-    bash "$motor" --repo dotfiles "${pass_args[@]+"${pass_args[@]}"}"
+    bash "$motor" --only dotfiles "${pass_args[@]+"${pass_args[@]}"}"
     dotfiles_rc=$?
     exit $(( bootstrap_rc | dotfiles_rc ))
 }

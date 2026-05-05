@@ -207,11 +207,26 @@ in private dotfiles forks, consolidating them behind a single
   ahead/behind vs `origin/main`. Positional drill-down: `mesh status crc`
   expands one host. Spec: `docs/2026-05-01-mesh-status-spec.md` in the
   private fork.
-- **`mesh update [<repo>] [--full]`** — pulls commits and re-applies install
-  scripts. Default is incremental (only the diff since last applied SHA).
-  `mesh update bootstrap` scopes to `dev-bootstrap`; `mesh update dotfiles`
-  to your fork. `--full` forces a complete `bash bootstrap.sh` /
-  `bash install.sh` even when the diff looks small.
+- **`mesh update [-o NAME] [-f] [-i]`** — pulls commits and re-applies install
+  scripts. Default scope is **both repos**, default mode is incremental (only
+  the diff since the last applied SHA). Flag matrix:
+  - `-o, --only NAME` restricts to one repo (`dev-bootstrap` or `dotfiles`;
+    `bootstrap` accepted as alias for `dev-bootstrap`).
+  - `-f, --full` forces a complete `bash bootstrap.sh` / `bash install.sh`
+    even when the diff looks small.
+  - `-i, --interactive` (only meaningful with `-f` on `dev-bootstrap`)
+    drops `--non-interactive` from the bootstrap call so the whiptail menu
+    shows — useful to validate a new opt-in (e.g. `INCLUDE_POSTGRES`)
+    without committing config tweaks first.
+
+  Examples:
+  ```
+  mesh update                     # both repos, incremental
+  mesh update -f                  # both repos, full
+  mesh update -o bootstrap        # only dev-bootstrap, incremental
+  mesh update -o bootstrap -f -i  # only dev-bootstrap, full, with menu
+  mesh update -o dotfiles         # only dotfiles, incremental
+  ```
 - **`mesh snap`** — captures this host's state for the panel. Called
   automatically by `mesh update` and the shell-start hook; rarely run by
   hand. Output lives at `~/Sync/mesh-status/<alias>.json`.
