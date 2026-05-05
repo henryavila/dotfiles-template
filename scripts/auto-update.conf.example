@@ -8,9 +8,18 @@
 #       docs/2026-05-02-mesh-cli-refactor-spec.md (mesh CLI dispatcher)
 
 # Repos to track. Each entry: absolute path. Order = check order.
-# Defaults assume the canonical clone layout in $HOME. Adjust if you
-# clone elsewhere (e.g. when the disk is on /Volumes/External you
-# may symlink ~/dev-bootstrap → /Volumes/External/code/dev-bootstrap).
+# Defaults assume the canonical clone layout in $HOME. To point
+# AUTO_UPDATE_REPOS at non-canonical paths per-host (e.g. when the disk
+# is on /Volumes/External on Mac), create the file below — never tracked
+# in git, sourced after this conf so re-assignments take effect:
+#
+#   # ~/.config/dotfiles/auto-update.conf.local
+#   AUTO_UPDATE_REPOS=(
+#       "/Volumes/External/code/dev-bootstrap"
+#       "$HOME/dotfiles"
+#   )
+#
+# (Path overridable via $AUTO_UPDATE_LOCAL_CONF env for test fixtures.)
 AUTO_UPDATE_REPOS=(
     "$HOME/dev-bootstrap"
     "$HOME/dotfiles"

@@ -40,7 +40,7 @@ mkdir -p "$STATE"
 git init --bare --quiet --initial-branch=main "$UPSTREAM"
 
 git init --quiet --initial-branch=main "$LOCAL"
-( cd "$LOCAL"
+( cd "$LOCAL" || exit
   git config user.email "test@test"
   git config user.name "test"
   git remote add origin "$UPSTREAM"
@@ -69,7 +69,7 @@ _run() {
 
 _reset() {
     rm -f "$STATE"/* 2>/dev/null || true
-    ( cd "$LOCAL"
+    ( cd "$LOCAL" || exit
       git checkout -q main 2>/dev/null || true
       git branch -D experiment 2>/dev/null || true
       git fetch -q origin 2>/dev/null || true
@@ -83,7 +83,7 @@ _push_via_sidecar() {
     local content="$1" path="$2" msg="$3"
     local sc="$TESTROOT/sidecar.$$"
     git clone -q "$UPSTREAM" "$sc"
-    ( cd "$sc"
+    ( cd "$sc" || exit
       git config user.email "other@test"
       git config user.name "other"
       mkdir -p "$(dirname "$path")"
@@ -126,9 +126,9 @@ test_unknown_arg() {
 
 test_branch_skip() {
     _reset
-    ( cd "$LOCAL"; git checkout -q -b experiment )
+    ( cd "$LOCAL" || exit; git checkout -q -b experiment )
     local out; out=$(_run)
-    ( cd "$LOCAL"; git checkout -q main; git branch -D experiment 2>/dev/null || true )
+    ( cd "$LOCAL" || exit; git checkout -q main; git branch -D experiment 2>/dev/null || true )
     if echo "$out" | grep -q "pulado.*experiment"; then
         _pass "non-main branch is skipped with notice"
     else
@@ -173,7 +173,7 @@ test_up_to_date() {
 
 test_ahead_skip() {
     _reset
-    ( cd "$LOCAL"
+    ( cd "$LOCAL" || exit
       git rev-parse HEAD > "$STATE/last-applied-$NAME"
       git -c commit.gpgsign=false commit -q --allow-empty -m "local-only"
     )
@@ -348,7 +348,7 @@ test_incremental_dotfiles_runs_install_sh() {
     # Push a new commit via sidecar.
     local sc="$TESTROOT/sidecar-incr.$$"
     git clone -q "$FULL_UPSTREAM" "$sc"
-    ( cd "$sc"
+    ( cd "$sc" || exit
       git config user.email "other@test"; git config user.name "other"
       echo "diff" > newfile-incr
       git add newfile-incr
@@ -431,7 +431,7 @@ echo "[install.sh stub: simulated failure]"
 exit 1
 EOF
     chmod +x "$FULL_LOCAL/install.sh"
-    ( cd "$FULL_LOCAL"
+    ( cd "$FULL_LOCAL" || exit
       git -c commit.gpgsign=false commit -q -am "fail stub"
       git push -q origin main )
     local out rc
@@ -499,7 +499,7 @@ _setup_full_fixture() {
     mkdir -p "$FULL_STATE"
     git init --bare --quiet --initial-branch=main "$FULL_UPSTREAM"
     git init --quiet --initial-branch=main "$FULL_LOCAL"
-    ( cd "$FULL_LOCAL"
+    ( cd "$FULL_LOCAL" || exit
       git config user.email "test@test"
       git config user.name "test"
       git remote add origin "$FULL_UPSTREAM"
@@ -542,6 +542,93 @@ test_full_dotfiles() {
 
 _OBSOLETE_replaced_by_sudo_shim_variant() { :; }
 
+# ─── Per-host conf.local override + invalid-path diagnostic ─────────
+# Spec: docs/2026-05-05-auto-update-per-host-override-handoff.md
+# Background: M2 (Mac, /Volumes/External/code/dev-bootstrap clone) hit
+# `mesh update bootstrap --full` exiting silently in 3s because the
+# default `AUTO_UPDATE_REPOS=("$HOME/dev-bootstrap")` didn't match the
+# host's layout. Two coupled gaps: (1) no per-host override, (2) the
+# "not a git repo" branch was `dbg` (silent unless VERBOSE).
+
+test_local_conf_anchored_in_motor() {
+    # Layer A contract: greps motor source for the LOCAL_CONF wiring +
+    # the visible notice. Mutation-resistant: deleting either line makes
+    # this test fail before any behavior test runs, surfacing intent
+    # loss in code review (per feedback_test_fixture_pitfalls.md).
+    local missing=()
+    grep -q 'LOCAL_CONF=' "$SCRIPT" || missing+=("LOCAL_CONF= assignment")
+    grep -q 'source "$LOCAL_CONF"' "$SCRIPT" || missing+=('source "$LOCAL_CONF"')
+    grep -q 'não é repo git' "$SCRIPT" || missing+=("notice 'não é repo git'")
+    if (( ${#missing[@]} == 0 )); then
+        _pass "motor sources LOCAL_CONF + uses notice for invalid paths"
+    else
+        _fail "motor missing intended changes: ${missing[*]}"
+    fi
+}
+
+test_local_conf_override_redirects_repos() {
+    # Layer B execution: main conf points to a NON-existent path; the
+    # .conf.local re-assigns AUTO_UPDATE_REPOS to the real fixture.
+    # If `source "$LOCAL_CONF"` regresses, this test goes red because
+    # the motor would target the bogus path and emit the new notice
+    # instead of pulling the upstream commit.
+    _reset
+    ( cd "$LOCAL" && git rev-parse HEAD ) > "$STATE/last-applied-$NAME"
+    _push_via_sidecar "override" "newfile-localconf" "via .conf.local"
+    local main_conf="$TESTROOT/main-bogus.conf"
+    local local_conf="$TESTROOT/auto-update.conf.local"
+    {
+        echo "AUTO_UPDATE_REPOS=(\"$TESTROOT/nonexistent-host-path\")"
+        echo 'AUTO_UPDATE_RELOAD=()'
+        echo 'AUTO_UPDATE_FOLLOWUPS=()'
+        echo ': "${AUTO_EXEC_SHELL:=0}"'
+        echo ': "${AUTO_UPDATE_FETCH_TIMEOUT:=3}"'
+        echo ': "${AUTO_UPDATE_VERBOSE:=0}"'
+        echo ': "${AUTO_UPDATE_SUDO_REGEX:=\\b(sudo)\\b}"'
+    } > "$main_conf"
+    echo "AUTO_UPDATE_REPOS=(\"$LOCAL\")" > "$local_conf"
+    local out
+    out=$(AUTO_UPDATE_CONF="$main_conf" AUTO_UPDATE_LOCAL_CONF="$local_conf" \
+        AUTO_UPDATE_STATE_DIR="$STATE" NO_COLOR=1 \
+        bash "$SCRIPT" 2>&1)
+    if [[ -f "$LOCAL/newfile-localconf" ]] && echo "$out" | grep -q "atualizado"; then
+        _pass ".conf.local override redirects AUTO_UPDATE_REPOS to real fixture"
+    else
+        _fail ".conf.local override did not take effect" "$out"
+    fi
+}
+
+test_invalid_repo_path_emits_notice() {
+    # Layer C diagnostic: conf points to a path that is NOT a git repo,
+    # NO .conf.local. Output MUST include "não é repo git" + a reference
+    # to AUTO_UPDATE_REPOS so the user can self-heal — replaces the silent
+    # skip that left users with a 3-second exit and no clue.
+    _reset
+    local bogus_conf="$TESTROOT/bogus-path.conf"
+    local bogus_path="$TESTROOT/not-a-git-repo"
+    mkdir -p "$bogus_path"  # exists as dir but lacks .git/
+    {
+        echo "AUTO_UPDATE_REPOS=(\"$bogus_path\")"
+        echo 'AUTO_UPDATE_RELOAD=()'
+        echo 'AUTO_UPDATE_FOLLOWUPS=()'
+        echo ': "${AUTO_EXEC_SHELL:=0}"'
+        echo ': "${AUTO_UPDATE_FETCH_TIMEOUT:=3}"'
+        echo ': "${AUTO_UPDATE_VERBOSE:=0}"'
+        echo ': "${AUTO_UPDATE_SUDO_REGEX:=\\b(sudo)\\b}"'
+    } > "$bogus_conf"
+    # Point .conf.local discovery at a non-existent path so it can't mask the test.
+    local out
+    out=$(AUTO_UPDATE_CONF="$bogus_conf" \
+        AUTO_UPDATE_LOCAL_CONF="$TESTROOT/never-exists.conf.local" \
+        AUTO_UPDATE_STATE_DIR="$STATE" NO_COLOR=1 \
+        bash "$SCRIPT" 2>&1)
+    if echo "$out" | grep -q "não é repo git" && echo "$out" | grep -q "AUTO_UPDATE_REPOS"; then
+        _pass "invalid AUTO_UPDATE_REPOS path emits visible notice with hint"
+    else
+        _fail "invalid path silent or hint missing" "$out"
+    fi
+}
+
 # ─── Run ──────────────────────────────────────────────────────────
 echo
 echo "${C_DIM}── auto-update.sh smoke tests${C_RST}"
@@ -572,6 +659,9 @@ test_full_dev_bootstrap_aborts_when_sudo_cancels
 test_full_dev_bootstrap_runs_bootstrap_when_sudo_ok
 test_lock_blocks_concurrent_run
 test_lock_recovers_stale
+test_local_conf_anchored_in_motor
+test_local_conf_override_redirects_repos
+test_invalid_repo_path_emits_notice
 
 echo
 total=$((PASS + FAIL))

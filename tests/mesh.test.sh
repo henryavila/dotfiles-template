@@ -34,9 +34,9 @@ PASS=0
 FAIL=0
 
 if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]; then
-    C_OK=$'\033[32m'; C_ERR=$'\033[31m'; C_DIM=$'\033[2m'; C_RST=$'\033[0m'
+    C_OK=$'\033[32m'; C_ERR=$'\033[31m'; C_RST=$'\033[0m'
 else
-    C_OK=""; C_ERR=""; C_DIM=""; C_RST=""
+    C_OK=""; C_ERR=""; C_RST=""
 fi
 
 _pass() { PASS=$((PASS+1)); printf "  ${C_OK}✓${C_RST} %s\n" "$1"; }

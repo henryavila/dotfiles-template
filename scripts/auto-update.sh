@@ -27,10 +27,26 @@ set -uo pipefail
 # without aborting the loop.
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Both paths overridable via env for test fixtures (see tests/auto-update.test.sh).
-CONF="${AUTO_UPDATE_CONF:-$HERE/auto-update.conf}"
+# CONF lookup priority (first hit wins):
+#   1. $AUTO_UPDATE_CONF                            — explicit override (tests, manual relocation)
+#   2. $HOME/.config/dotfiles/auto-update.conf      — fork-de-template layout
+#                                                     (template install.sh deploys
+#                                                     auto-update.conf.example here in `once` mode)
+#   3. $HERE/auto-update.conf                       — in-tree (private dotfiles repo layout)
+# Both real-world layouts therefore work without manual env wiring.
+# STATE_DIR overridable via env for test fixtures (see tests/auto-update.test.sh).
+CONF="${AUTO_UPDATE_CONF:-}"
+if [[ -z "$CONF" ]]; then
+    if [[ -r "$HOME/.config/dotfiles/auto-update.conf" ]]; then
+        CONF="$HOME/.config/dotfiles/auto-update.conf"
+    else
+        CONF="$HERE/auto-update.conf"
+    fi
+fi
 STATE_DIR="${AUTO_UPDATE_STATE_DIR:-$HOME/.local/state/dev-bootstrap}"
-LOCK="$STATE_DIR/update.lock"
+# (Legacy `LOCK="$STATE_DIR/update.lock"` removed — see LOCK_DIR below;
+# the mkdir-based mutex superseded the file-based one and the unused
+# variable was tripping shellcheck SC2034.)
 
 # ─── Args ────────────────────────────────────────────────────────────
 FROM_SHELL_START=0
@@ -97,6 +113,17 @@ if [[ ! -r "$CONF" ]]; then
 fi
 # shellcheck disable=SC1090
 source "$CONF"
+
+# Per-host override — never tracked in git. Sourced AFTER the main conf so
+# re-assignments (e.g., AUTO_UPDATE_REPOS=(...)) take effect. Use this to
+# point AUTO_UPDATE_REPOS at non-canonical paths (e.g. /Volumes/External
+# on Mac) without forking the public conf. Path overridable via env for
+# test fixtures.
+LOCAL_CONF="${AUTO_UPDATE_LOCAL_CONF:-$HOME/.config/dotfiles/auto-update.conf.local}"
+if [[ -r "$LOCAL_CONF" ]]; then
+    # shellcheck disable=SC1090
+    source "$LOCAL_CONF"
+fi
 
 # ─── Lock (mkdir-based mutex; portable across Linux + macOS) ────────
 # Why not flock(1): GNU-only, not shipped on macOS without `brew install
@@ -188,7 +215,14 @@ process_repo() {
     local name
     name="$(basename "$repo")"
 
-    [[ -d "$repo/.git" ]] || { dbg "skip $name (not a git repo)"; return 0; }
+    # Visible diagnostic (was `dbg`, silent by default): a configured path
+    # that isn't a git repo means AUTO_UPDATE_REPOS is wrong for this host.
+    # Silent skip used to leave users with a 3-second exit and zero hints.
+    if [[ ! -d "$repo/.git" ]]; then
+        notice "pulado: $name (caminho '$repo' não é repo git)"
+        notice "  → ajuste AUTO_UPDATE_REPOS em $CONF, ou crie $LOCAL_CONF para override per-host"
+        return 0
+    fi
 
     local wrap; wrap="$(wrapper_for "$name")"
 
