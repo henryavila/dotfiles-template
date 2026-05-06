@@ -311,13 +311,21 @@ process_repo() {
             # its whiptail menu (used to validate new opt-ins like postgres
             # without committing config.env tweaks first). Default stays
             # automated so the shell-start hook never blocks on a prompt.
-            local bootstrap_args=()
-            if (( ! INTERACTIVE )); then
-                bootstrap_args+=("--non-interactive")
+            #
+            # CRITICAL: do NOT pipe through `sed` when interactive — the pipe
+            # makes stdout a non-TTY, and whiptail (plus any other dialog)
+            # falls back to non-interactive mode silently. The pretty-prefix
+            # cosmetic loses to having the menu actually render. Default
+            # mode keeps the pipe so the shell-start hook output stays
+            # uniform.
+            local bootstrap_rc=0
+            if (( INTERACTIVE )); then
+                notice "$name: --interactive — bootstrap.sh roda com menu (output direto pro TTY, sem prefix)"
+                bash "$repo/bootstrap.sh" || bootstrap_rc=$?
             else
-                notice "$name: --interactive — bootstrap.sh será rodado com menu (sem --non-interactive)"
+                bash "$repo/bootstrap.sh" --non-interactive 2>&1 | sed 's/^/    /' || bootstrap_rc=$?
             fi
-            if ! bash "$repo/bootstrap.sh" "${bootstrap_args[@]+"${bootstrap_args[@]}"}" 2>&1 | sed 's/^/    /'; then
+            if (( bootstrap_rc != 0 )); then
                 warn "$name: bootstrap.sh --full falhou — last-applied NÃO bumped"
                 return 1
             fi
