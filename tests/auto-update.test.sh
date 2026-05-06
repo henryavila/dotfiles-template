@@ -581,78 +581,92 @@ _OBSOLETE_replaced_by_sudo_shim_variant() { :; }
 # blocks on a prompt. The new -i/--interactive flag drops that arg so
 # the user can see the whiptail menu (e.g. to validate a new opt-in).
 
-test_default_full_bootstrap_uses_non_interactive() {
-    # Sanity check — default --full path on dev-bootstrap MUST pass
-    # --non-interactive to bootstrap.sh. Mutation-deleting the
-    # `if (( ! INTERACTIVE ))` guard would make this test red.
-    _setup_full_fixture "dev-bootstrap" "bootstrap.sh"
-    # Replace stub with one that records args.
+# Stub bootstrap.sh that records BOTH the args it received AND whether
+# its stdout is a pipe. The pipe check is the load-bearing assertion for
+# the TTY-preservation contract: whiptail (and any dialog) falls back to
+# non-interactive mode when stdout isn't a TTY, so the motor MUST avoid
+# `| sed` in interactive mode even if the args look right on the surface.
+_install_bootstrap_args_recorder() {
     cat > "$FULL_LOCAL/bootstrap.sh" <<EOF
 #!/usr/bin/env bash
-echo "args=\$*" > "$FULL_STATE/bootstrap-args.log"
+# Capture stdout pipe state BEFORE redirecting our own output to the
+# log file — once we open the file with \`{ … } > file\`, /dev/stdout
+# points at the regular file, not at whatever the parent (the motor)
+# handed us. The whole point of this assertion is to observe the
+# motor's stdout-handling, so we have to read the fd state first.
+if [[ -p /dev/stdout ]]; then
+    pipe_state="pipe"
+else
+    pipe_state="not-pipe"
+fi
+{
+    echo "args=\$*"
+    echo "stdout=\$pipe_state"
+} > "$FULL_STATE/bootstrap-info.log"
 exit 0
 EOF
     chmod +x "$FULL_LOCAL/bootstrap.sh"
     ( cd "$FULL_LOCAL" || exit
-      git -c commit.gpgsign=false commit -q -am "args-recording stub"
+      git -c commit.gpgsign=false commit -q -am "args+pipe-recording stub"
       git push -q origin main )
+}
+
+test_default_full_bootstrap_uses_non_interactive() {
+    # Sanity check — default --full path on dev-bootstrap MUST pass
+    # --non-interactive to bootstrap.sh AND go through the `| sed` pipe
+    # (which prefixes output and makes stdout a non-TTY). Mutation
+    # against either contract makes this test red.
+    _setup_full_fixture "dev-bootstrap" "bootstrap.sh"
+    _install_bootstrap_args_recorder
 
     _run_full_with_sudo_shim 0 --full >/dev/null
-    local args; args="$(cat "$FULL_STATE/bootstrap-args.log" 2>/dev/null)"
+    local info; info="$(cat "$FULL_STATE/bootstrap-info.log" 2>/dev/null)"
 
-    if echo "$args" | grep -q -- "--non-interactive"; then
-        _pass "default --full passes --non-interactive to bootstrap.sh"
+    if echo "$info" | grep -q -- "--non-interactive" && \
+       echo "$info" | grep -q "^stdout=pipe$"; then
+        _pass "default --full passes --non-interactive AND keeps the | sed pipe"
     else
-        _fail "default --full did NOT pass --non-interactive" "args=$args"
+        _fail "default --full args/pipe contract regressed" "$info"
     fi
 }
 
 test_interactive_drops_non_interactive_in_full_bootstrap() {
-    # Layer B: --full + --interactive on dev-bootstrap must NOT pass
-    # --non-interactive to bootstrap.sh. The whiptail menu only shows
-    # when bootstrap.sh runs without that flag.
+    # Layer B: --full + --interactive on dev-bootstrap must (a) NOT pass
+    # --non-interactive AND (b) NOT pipe through sed (so whiptail sees a
+    # real TTY). Either alone is necessary but not sufficient — the user
+    # bug today (`mesh update -f -i não rodou de forma interativa`) was
+    # that `--non-interactive` was correctly dropped but the pipe stayed,
+    # and whiptail bailed silently on the non-TTY stdout.
     _setup_full_fixture "dev-bootstrap" "bootstrap.sh"
-    cat > "$FULL_LOCAL/bootstrap.sh" <<EOF
-#!/usr/bin/env bash
-echo "args=\$*" > "$FULL_STATE/bootstrap-args.log"
-exit 0
-EOF
-    chmod +x "$FULL_LOCAL/bootstrap.sh"
-    ( cd "$FULL_LOCAL" || exit
-      git -c commit.gpgsign=false commit -q -am "args-recording stub"
-      git push -q origin main )
+    _install_bootstrap_args_recorder
 
     _run_full_with_sudo_shim 0 --full --interactive >/dev/null
-    local args; args="$(cat "$FULL_STATE/bootstrap-args.log" 2>/dev/null)"
+    local info; info="$(cat "$FULL_STATE/bootstrap-info.log" 2>/dev/null)"
 
-    if echo "$args" | grep -q "args=" && ! echo "$args" | grep -q -- "--non-interactive"; then
-        _pass "--interactive drops --non-interactive in --full + dev-bootstrap"
+    if [[ -n "$info" ]] \
+       && ! echo "$info" | grep -q -- "--non-interactive" \
+       && echo "$info" | grep -q "^stdout=not-pipe$"; then
+        _pass "--interactive drops --non-interactive AND bypasses the | sed pipe"
     else
-        _fail "--interactive did not drop --non-interactive" "args=$args"
+        _fail "--interactive args/pipe contract regressed" "$info"
     fi
 }
 
 test_interactive_short_form() {
     # -i is the short alias of --interactive. Pin both forms route to
-    # the same arg-parser branch.
+    # the same arg-parser branch AND the same pipe-bypass logic.
     _setup_full_fixture "dev-bootstrap" "bootstrap.sh"
-    cat > "$FULL_LOCAL/bootstrap.sh" <<EOF
-#!/usr/bin/env bash
-echo "args=\$*" > "$FULL_STATE/bootstrap-args.log"
-exit 0
-EOF
-    chmod +x "$FULL_LOCAL/bootstrap.sh"
-    ( cd "$FULL_LOCAL" || exit
-      git -c commit.gpgsign=false commit -q -am "args-recording stub"
-      git push -q origin main )
+    _install_bootstrap_args_recorder
 
     _run_full_with_sudo_shim 0 -f -i >/dev/null
-    local args; args="$(cat "$FULL_STATE/bootstrap-args.log" 2>/dev/null)"
+    local info; info="$(cat "$FULL_STATE/bootstrap-info.log" 2>/dev/null)"
 
-    if echo "$args" | grep -q "args=" && ! echo "$args" | grep -q -- "--non-interactive"; then
-        _pass "-i (short form) is equivalent to --interactive"
+    if [[ -n "$info" ]] \
+       && ! echo "$info" | grep -q -- "--non-interactive" \
+       && echo "$info" | grep -q "^stdout=not-pipe$"; then
+        _pass "-i (short form) drops --non-interactive AND bypasses pipe"
     else
-        _fail "-i short form regressed" "args=$args"
+        _fail "-i short form regressed (args or pipe)" "$info"
     fi
 }
 
