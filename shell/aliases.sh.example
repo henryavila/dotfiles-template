@@ -18,7 +18,7 @@
 #   20-terminal-ux    → ls/ll/la (eza), cat (bat), fd
 #                       Phase E: top→btop, df→duf, du→dust, ping→gping,
 #                                http→xh, ps→procs
-#   40-tmux           → tl / ta / tn / tm (attach-or-create 'main')
+#   40-tmux           → tl / ta() / tn / tm() (safe tmux attach/switch)
 #   50-git            → g/gs/gl/gd/gco/gb/gp/gaa/gc/grb/gsh/glog/gloga
 #                       whoops / gmm + __git_complete (bash)
 #   60-web-stack      → art / artisan / cinst / cup / fresh / migrate /
