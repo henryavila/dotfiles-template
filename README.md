@@ -230,6 +230,17 @@ in private dotfiles forks, consolidating them behind a single
 - **`mesh snap`** — captures this host's state for the panel. Called
   automatically by `mesh update` and the shell-start hook; rarely run by
   hand. Output lives at `~/Sync/mesh-status/<alias>.json`.
+- **`mesh run [flags] <subcommand>`** — runs `status`, `snap`, or `update`
+  on selected configured hosts. The default selector preselects online hosts;
+  `--hosts A,B`, `--online`, and `--all` are available for automation.
+  `mesh run update ... -i` is rejected so interactive menus stay on one host.
+
+  Examples:
+  ```
+  mesh run update -f
+  mesh run --hosts mac,crc update -f
+  mesh run --online snap --quiet
+  ```
 
 ### Setup (after `bash install.sh`)
 
@@ -237,7 +248,8 @@ Two config files land at `~/.config/dotfiles/`:
 
 - **`mesh-status.conf`** — set `MESH_TAILSCALE_ALIAS_MAP` to map your
   tailnet hostnames to short aliases used in the panel. Choose
-  `MESH_REPOS` to list which repo paths show up.
+  `MESH_REPOS` to list which repo paths show up, and `MESH_RUN_HOSTS`
+  to define the host aliases offered by `mesh run`.
 - **`auto-update.conf`** — list of repos to auto-update (default:
   `dev-bootstrap` + `dotfiles`). The reload table maps shell-rc paths
   to actions, so editing `~/.zshrc.local` triggers a `exec zsh` advice

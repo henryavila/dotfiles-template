@@ -229,6 +229,18 @@ em forks privados, consolidando tudo atrás de um único `mesh <subcommand>`.
 - **`mesh snap`** — captura o estado deste host pro painel. Chamado
   automaticamente pelo `mesh update` e pelo hook do shell-start; raramente
   rodado à mão. Output em `~/Sync/mesh-status/<alias>.json`.
+- **`mesh run [flags] <subcommand>`** — roda `status`, `snap` ou `update`
+  nos hosts configurados selecionados. O seletor default preseleciona hosts
+  online; `--hosts A,B`, `--online` e `--all` servem para automação.
+  `mesh run update ... -i` é rejeitado para manter menus interativos em um
+  host por vez.
+
+  Exemplos:
+  ```
+  mesh run update -f
+  mesh run --hosts mac,crc update -f
+  mesh run --online snap --quiet
+  ```
 
 ### Setup (depois do `bash install.sh`)
 
@@ -236,7 +248,8 @@ Dois arquivos de config aterrissam em `~/.config/dotfiles/`:
 
 - **`mesh-status.conf`** — setar `MESH_TAILSCALE_ALIAS_MAP` pra mapear seus
   hostnames Tailscale pros aliases curtos usados no painel. Escolher
-  `MESH_REPOS` listando quais paths de repo aparecem.
+  `MESH_REPOS` listando quais paths de repo aparecem, e `MESH_RUN_HOSTS`
+  para definir os aliases oferecidos pelo `mesh run`.
 - **`auto-update.conf`** — lista de repos pra auto-update (default:
   `dev-bootstrap` + `dotfiles`). A reload table mapeia paths de shell-rc
   pra ações, então editar `~/.zshrc.local` dispara um aviso de `exec zsh`

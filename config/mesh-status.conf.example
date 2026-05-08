@@ -34,6 +34,13 @@ MESH_HISTORY_RETENTION_DAYS=90
 # Repos rastreados (subset por host se algum não estiver clonado)
 MESH_REPOS=("dev-bootstrap" "dotfiles" "dotfiles-template")
 
+# Hosts oferecidos pelo `mesh run`.
+#
+# Formato: "alias=ssh-target". O alias é o nome canônico usado no painel;
+# o target é o Host do ~/.ssh/config que deve ser usado pelo ssh.
+# O selector padrão pré-seleciona os hosts online.
+MESH_RUN_HOSTS=("ultron=ultron-wsl" "mac=mac" "crc=crc")
+
 # Path overrides — defaults to $HOME/<repo-name>. Use underscores in the
 # var name where the repo name has hyphens (bash limitation).
 # MESH_REPO_PATH_dotfiles_template="/path/custom"

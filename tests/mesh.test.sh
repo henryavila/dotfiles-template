@@ -10,7 +10,7 @@
 # auto-update.sh) inside a temp $MESH_HOME so we can observe what args
 # the dispatcher passes through. Asserts cover:
 #   - help / version flags
-#   - subcommand routing (status, snap, update)
+#   - subcommand routing (status, snap, update, run)
 #   - positional drill-down for status (alias → --detail)
 #   - flag passthrough
 #   - top-level flag fallback (mesh --json → status --json)
@@ -60,6 +60,7 @@ echo "SNAP-LIB: $*"
 EOF
     cat > "$dir/auto-update.sh" <<'EOF'
 #!/usr/bin/env bash
+echo "MOTOR-ENV: DEV_BOOTSTRAP_TMUX_AUTO_MAIN=${DEV_BOOTSTRAP_TMUX_AUTO_MAIN-unset}"
 echo "MOTOR: $*"
 EOF
     chmod +x "$dir/lib/mesh-status" "$dir/lib/mesh-snap" "$dir/auto-update.sh"
@@ -69,8 +70,120 @@ _run() {
     MESH_HOME="$STUB" bash "$MESH" "$@" 2>&1
 }
 
+_make_run_conf() {
+    local path="$1"
+    cat > "$path" <<'EOF'
+MESH_RUN_HOSTS=("ultron=ultron-wsl" "mac=mac" "crc=crc")
+MESH_TAILSCALE_ALIAS_MAP='{"ultron":"ultron","code-server":"mac","crcmg005078":"crc"}'
+EOF
+}
+
+_make_ssh_stub() {
+    local path="$1"
+    cat > "$path" <<'EOF'
+#!/usr/bin/env bash
+{
+    printf 'SSH:'
+    for arg in "$@"; do
+        printf ' <%s>' "$arg"
+    done
+    printf '\n'
+} >> "$MESH_TEST_SSH_LOG"
+echo "SSH-STUB: $*"
+EOF
+    chmod +x "$path"
+}
+
+_make_fzf_stub() {
+    local path="$1"
+    cat > "$path" <<'EOF'
+#!/usr/bin/env bash
+{
+    printf 'FZF-ARGS:'
+    for arg in "$@"; do
+        printf ' <%s>' "$arg"
+    done
+    printf '\n'
+} >> "$MESH_TEST_FZF_ARGS_LOG"
+while IFS= read -r line; do
+    printf '%s\n' "$line" >> "$MESH_TEST_FZF_INPUT_LOG"
+done
+printf '%s\n' "$MESH_TEST_FZF_OUTPUT"
+EOF
+    chmod +x "$path"
+}
+
+_make_tailscale_stub() {
+    local path="$1"
+    cat > "$path" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "status" && "${2:-}" == "--json" ]]; then
+    cat <<'JSON'
+{
+  "Self": {
+    "HostName": "Mac mini M4 de Henry",
+    "DNSName": "code-server.bream-goldeye.ts.net."
+  },
+  "Peer": {
+    "peer-ultron": {
+      "Online": true,
+      "HostName": "ULTRON",
+      "DNSName": "ultron.bream-goldeye.ts.net."
+    },
+    "peer-crc": {
+      "Online": false,
+      "HostName": "CRCMG005078",
+      "DNSName": "crcmg005078.bream-goldeye.ts.net."
+    }
+  }
+}
+JSON
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$path"
+}
+
+_run_run() {
+    MESH_HOME="$STUB" \
+    MESH_STATUS_CONF="$RUN_CONF" \
+    MESH_RUN_SELF_ALIAS="${MESH_RUN_SELF_ALIAS-ultron}" \
+    MESH_RUN_ONLINE_HOSTS="${MESH_RUN_ONLINE_HOSTS-ultron mac}" \
+    MESH_RUN_SSH="$SSH_STUB" \
+    MESH_RUN_SELECTOR="${MESH_RUN_SELECTOR:-}" \
+    MESH_RUN_FZF="${MESH_RUN_FZF:-$FZF_STUB}" \
+    MESH_TEST_SSH_LOG="$SSH_LOG" \
+    MESH_TEST_FZF_OUTPUT="${MESH_TEST_FZF_OUTPUT:-}" \
+    MESH_TEST_FZF_INPUT_LOG="$FZF_INPUT_LOG" \
+    MESH_TEST_FZF_ARGS_LOG="$FZF_ARGS_LOG" \
+    bash "$MESH" run "$@" 2>&1
+}
+
+_reset_run_state() {
+    _make_run_conf "$RUN_CONF"
+    : > "$SSH_LOG"
+    : > "$FZF_INPUT_LOG"
+    : > "$FZF_ARGS_LOG"
+}
+
 STUB="$TESTROOT/stub"
 _make_stub_mesh_home "$STUB"
+RUN_CONF="$TESTROOT/mesh-status.conf"
+SSH_STUB="$TESTROOT/ssh-stub"
+SSH_LOG="$TESTROOT/ssh.log"
+FZF_STUB="$TESTROOT/fzf-stub"
+FZF_INPUT_LOG="$TESTROOT/fzf-input.log"
+FZF_ARGS_LOG="$TESTROOT/fzf-args.log"
+TAILSCALE_STUB_DIR="$TESTROOT/tailscale-bin"
+mkdir -p "$TAILSCALE_STUB_DIR"
+_make_run_conf "$RUN_CONF"
+_make_ssh_stub "$SSH_STUB"
+_make_fzf_stub "$FZF_STUB"
+_make_tailscale_stub "$TAILSCALE_STUB_DIR/tailscale"
+: > "$SSH_LOG"
+: > "$FZF_INPUT_LOG"
+: > "$FZF_ARGS_LOG"
 
 echo
 echo "── mesh dispatcher tests"
@@ -80,7 +193,7 @@ echo
 
 test_help() {
     local out; out=$(bash "$MESH" --help 2>&1)
-    if echo "$out" | grep -q "Mesh CLI" && echo "$out" | grep -q "mesh status" && echo "$out" | grep -q "mesh update"; then
+    if echo "$out" | grep -q "Mesh CLI" && echo "$out" | grep -q "mesh status" && echo "$out" | grep -q "mesh update" && echo "$out" | grep -q "mesh run"; then
         _pass "--help renders Mesh CLI usage"
     else
         _fail "--help output missing canonical entries" "$out"
@@ -190,9 +303,21 @@ test_update_no_only_runs_both() {
     fi
 }
 
+test_update_help_runs_motor_help_once() {
+    local out; out=$(_run update --help)
+    local lines; lines=$(echo "$out" | grep -c "MOTOR:")
+    if (( lines == 1 )) && echo "$out" | grep -q "MOTOR: --help"; then
+        _pass "mesh update --help delegates to motor help once"
+    else
+        _fail "update --help should not run both repos" "$out"
+    fi
+}
+
 test_update_only_long_form() {
     local out; out=$(_run update --only dev-bootstrap)
-    if echo "$out" | grep -q "MOTOR: --only dev-bootstrap" && ! echo "$out" | grep -q "MOTOR: --only dotfiles"; then
+    if echo "$out" | grep -q "MOTOR-ENV: DEV_BOOTSTRAP_TMUX_AUTO_MAIN=0" \
+       && echo "$out" | grep -q "MOTOR: --only dev-bootstrap" \
+       && ! echo "$out" | grep -q "MOTOR: --only dotfiles"; then
         _pass "mesh update --only dev-bootstrap → motor --only dev-bootstrap (single-repo)"
     else
         _fail "--only long form dispatch wrong" "$out"
@@ -240,6 +365,18 @@ test_update_full_and_interactive_forwarded() {
     fi
 }
 
+test_update_no_only_full_interactive_runs_both_with_flags() {
+    local out; out=$(_run update -f -i)
+    local lines; lines=$(echo "$out" | grep -c "MOTOR:")
+    if (( lines == 2 )) \
+       && echo "$out" | grep -q "MOTOR: --only dev-bootstrap --full --interactive" \
+       && echo "$out" | grep -q "MOTOR: --only dotfiles --full --interactive"; then
+        _pass "mesh update -f -i runs both repos and preserves --interactive"
+    else
+        _fail "mesh update -f -i did not preserve flags for both repos" "$out"
+    fi
+}
+
 test_update_only_requires_value() {
     # `-o --full` would otherwise consume --full as the repo name.
     local out rc
@@ -262,6 +399,178 @@ test_update_unknown_arg_fails() {
         _pass "mesh update <typo> exits non-zero with error"
     else
         _fail "unknown arg did not fail loud (rc=$rc)" "$out"
+    fi
+}
+
+# ─── Run subcommand ────────────────────────────────────────────────
+
+test_run_hosts_automation_uses_ssh_only_for_remotes() {
+    _reset_run_state
+
+    local out log
+    out=$(_run_run --hosts mac,crc update -f)
+    log=$(cat "$SSH_LOG")
+
+    if ! echo "$out" | grep -q "MOTOR:" \
+       && echo "$log" | grep -q "SSH: <-tt> <mac>" \
+       && echo "$log" | grep -q "SSH: <-tt> <crc>" \
+       && echo "$log" | grep -q "DEV_BOOTSTRAP_TMUX_AUTO_MAIN=0; export DEV_BOOTSTRAP_TMUX_AUTO_MAIN;" \
+       && echo "$log" | grep -q "mesh update -f"; then
+        _pass "mesh run --hosts mac,crc update -f runs remotes over ssh"
+    else
+        _fail "mesh run --hosts did not route remotes correctly" "out=[$out] log=[$log]"
+    fi
+}
+
+test_run_hosts_includes_local_without_ssh() {
+    _reset_run_state
+
+    local out log ssh_lines
+    out=$(_run_run --hosts ultron,mac update -f)
+    log=$(cat "$SSH_LOG")
+    ssh_lines=$(echo "$log" | grep -c "^SSH:")
+
+    if echo "$out" | grep -q "MOTOR: --only dev-bootstrap --full" \
+       && echo "$out" | grep -q "MOTOR: --only dotfiles --full" \
+       && echo "$out" | grep -q "MOTOR-ENV: DEV_BOOTSTRAP_TMUX_AUTO_MAIN=0" \
+       && (( ssh_lines == 1 )) \
+       && echo "$log" | grep -q "SSH: <-tt> <mac>"; then
+        _pass "mesh run executes the selected self alias locally"
+    else
+        _fail "mesh run did not separate local and remote execution" "out=[$out] log=[$log]"
+    fi
+}
+
+test_run_default_selector_uses_online_hosts() {
+    _reset_run_state
+
+    local out log
+    out=$(printf '\n' | \
+        MESH_HOME="$STUB" \
+        MESH_STATUS_CONF="$RUN_CONF" \
+        MESH_RUN_SELF_ALIAS="ultron" \
+        MESH_RUN_ONLINE_HOSTS="ultron mac" \
+        MESH_RUN_SELECTOR="text" \
+        MESH_RUN_SSH="$SSH_STUB" \
+        MESH_TEST_SSH_LOG="$SSH_LOG" \
+        bash "$MESH" run update -f 2>&1)
+    log=$(cat "$SSH_LOG")
+
+    if echo "$out" | grep -q "MOTOR: --only dev-bootstrap --full" \
+       && echo "$out" | grep -q "MOTOR: --only dotfiles --full" \
+       && echo "$log" | grep -q "SSH: <-tt> <mac>" \
+       && ! echo "$log" | grep -q "SSH: <-tt> <crc>"; then
+        _pass "mesh run default selector preselects online hosts"
+    else
+        _fail "mesh run default selector did not use online defaults" "out=[$out] log=[$log]"
+    fi
+}
+
+test_run_fzf_selector_allows_dynamic_multi_select() {
+    _reset_run_state
+
+    local out log fzf_input fzf_args
+    out=$(MESH_RUN_SELECTOR=fzf \
+        MESH_TEST_FZF_OUTPUT=$'mac\tonline\t\tssh:mac\ncrc\toffline\t\tssh:crc' \
+        _run_run update -f)
+    log=$(cat "$SSH_LOG")
+    fzf_input=$(cat "$FZF_INPUT_LOG")
+    fzf_args=$(cat "$FZF_ARGS_LOG")
+
+    if ! echo "$out" | grep -q "MOTOR:" \
+       && echo "$log" | grep -q "SSH: <-tt> <mac>" \
+       && echo "$log" | grep -q "SSH: <-tt> <crc>" \
+       && ! echo "$log" | grep -q "SSH: <-tt> <ultron-wsl>" \
+       && echo "$fzf_input" | grep -q $'^ultron\tonline' \
+       && echo "$fzf_input" | grep -q $'^mac\tonline' \
+       && echo "$fzf_input" | grep -q $'^crc\toffline' \
+       && echo "$fzf_args" | grep -q "<--sync>" \
+       && echo "$fzf_args" | grep -q "start:select+down+select+down+first"; then
+        _pass "mesh run default selector uses fzf multi-select with online preselected"
+    else
+        _fail "mesh run fzf selector did not behave as a dynamic multi-select" "out=[$out] log=[$log] fzf_input=[$fzf_input] fzf_args=[$fzf_args]"
+    fi
+}
+
+test_run_online_no_prompt() {
+    _reset_run_state
+
+    local out log
+    out=$(_run_run --online snap --quiet)
+    log=$(cat "$SSH_LOG")
+
+    if echo "$out" | grep -q "SNAP-LIB: --quiet" \
+       && echo "$log" | grep -q "SSH: <-tt> <mac>" \
+       && echo "$log" | grep -q "mesh snap --quiet" \
+       && ! echo "$log" | grep -q "SSH: <-tt> <crc>"; then
+        _pass "mesh run --online executes online hosts without selector"
+    else
+        _fail "mesh run --online routing wrong" "out=[$out] log=[$log]"
+    fi
+}
+
+test_run_online_resolves_self_from_tailscale_dnsname() {
+    _reset_run_state
+
+    local out log
+    out=$(PATH="$TAILSCALE_STUB_DIR:$PATH" \
+        MESH_RUN_SELF_ALIAS="" \
+        MESH_RUN_ONLINE_HOSTS="" \
+        _run_run --online update -f)
+    log=$(cat "$SSH_LOG")
+
+    if echo "$out" | grep -q "MOTOR: --only dev-bootstrap --full" \
+       && echo "$out" | grep -q "MOTOR: --only dotfiles --full" \
+       && echo "$log" | grep -q "SSH: <-tt> <ultron-wsl>" \
+       && ! echo "$log" | grep -q "SSH: <-tt> <mac>" \
+       && ! echo "$log" | grep -q "SSH: <-tt> <crc>"; then
+        _pass "mesh run --online resolves local alias from Tailscale DNSName fallback"
+    else
+        _fail "mesh run --online did not resolve local alias from Tailscale DNSName" "out=[$out] log=[$log]"
+    fi
+}
+
+test_run_dry_run_executes_nothing() {
+    _reset_run_state
+
+    local out log
+    out=$(_run_run --dry-run --hosts mac update -f)
+    log=$(cat "$SSH_LOG")
+
+    if echo "$out" | grep -q "DRY-RUN: mac (ssh mac): mesh update -f" \
+       && [[ -z "$log" ]] \
+       && ! echo "$out" | grep -q "MOTOR:"; then
+        _pass "mesh run --dry-run shows command and does not execute"
+    else
+        _fail "mesh run --dry-run executed or logged unexpected work" "out=[$out] log=[$log]"
+    fi
+}
+
+test_run_rejects_interactive_update() {
+    _reset_run_state
+
+    local out rc log
+    out=$(_run_run --hosts mac update -f -i 2>&1); rc=$?
+    log=$(cat "$SSH_LOG")
+
+    if (( rc != 0 )) \
+       && echo "$out" | grep -q "interactive is not supported across hosts" \
+       && [[ -z "$log" ]]; then
+        _pass "mesh run update rejects -i/--interactive"
+    else
+        _fail "mesh run update -i was not rejected cleanly (rc=$rc)" "out=[$out] log=[$log]"
+    fi
+}
+
+test_run_rejects_unknown_mesh_subcommand() {
+    _reset_run_state
+
+    local out rc
+    out=$(_run_run --hosts mac garbage 2>&1); rc=$?
+    if (( rc != 0 )) && echo "$out" | grep -q "unsupported mesh subcommand"; then
+        _pass "mesh run rejects unsupported mesh subcommands"
+    else
+        _fail "mesh run accepted unsupported subcommand (rc=$rc)" "$out"
     fi
 }
 
@@ -312,13 +621,24 @@ test_status_positional_with_flag
 test_top_level_flag_falls_to_status
 test_snap_passthrough
 test_update_no_only_runs_both
+test_update_help_runs_motor_help_once
 test_update_only_long_form
 test_update_only_short_form
 test_update_bootstrap_brevity_alias
 test_update_dotfiles_with_full_short
 test_update_full_and_interactive_forwarded
+test_update_no_only_full_interactive_runs_both_with_flags
 test_update_only_requires_value
 test_update_unknown_arg_fails
+test_run_hosts_automation_uses_ssh_only_for_remotes
+test_run_hosts_includes_local_without_ssh
+test_run_default_selector_uses_online_hosts
+test_run_fzf_selector_allows_dynamic_multi_select
+test_run_online_no_prompt
+test_run_online_resolves_self_from_tailscale_dnsname
+test_run_dry_run_executes_nothing
+test_run_rejects_interactive_update
+test_run_rejects_unknown_mesh_subcommand
 test_unknown_subcommand_fails
 test_missing_companion_fails_loud
 
