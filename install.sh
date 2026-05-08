@@ -101,9 +101,6 @@ deploy_one() {
         "$HOME"/.bashrc.d/*|"$HOME"/.zshrc.d/*)
             chmod 0644 "$dst"
             ;;
-        "$HOME"/.local/share/zsh/site-functions/*)
-            chmod 0644 "$dst"
-            ;;
         "$HOME"/.local/bin/*)
             chmod 0755 "$dst"
             ;;
@@ -117,20 +114,6 @@ deploy_one() {
     fi
 }
 
-deploy_zsh_completions() {
-    local src_dir="$HERE/shell/completions"
-    local dst_dir="$HOME/.local/share/zsh/site-functions"
-    local src base
-
-    [[ -d "$src_dir" ]] || return 0
-
-    for src in "$src_dir"/_*; do
-        [[ -f "$src" ]] || continue
-        base="$(basename "$src")"
-        deploy_one "shell/completions/$base" "$dst_dir/$base" overwrite
-    done
-}
-
 found_any=0
 for pair in "${MAPPINGS[@]}"; do
     # Split src|dst|mode — at most 3 fields.
@@ -141,8 +124,6 @@ for pair in "${MAPPINGS[@]}"; do
         deploy_one "$src" "$dst" "$mode"
     fi
 done
-
-deploy_zsh_completions
 
 if [[ "$found_any" -eq 0 ]]; then
     warn "no non-'.example' files found — copy an .example to its plain name and edit it"
