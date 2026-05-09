@@ -238,7 +238,21 @@ in private dotfiles forks, consolidating them behind a single
   ```
   mesh topic list
   mesh topic 20 30
+  mesh topic 20-terminal-ux 30-shell
   ```
+
+  The topic catalog is not hardcoded in this template. `mesh topic list`
+  resolves the local `dev-bootstrap` checkout and delegates to
+  `bash bootstrap.sh --list-topics`, so the official source remains the
+  public bootstrap repo. Resolution order is `MESH_DEV_BOOTSTRAP_DIR`, then
+  `~/.config/dotfiles/auto-update.conf`, then its per-host local override
+  (`AUTO_UPDATE_LOCAL_CONF`, defaulting to
+  `~/.config/dotfiles/auto-update.conf.local`), then `~/dev-bootstrap`.
+
+  `mesh topic <...>` forces a full, non-interactive apply of only those
+  `dev-bootstrap` topics. It rejects dotfiles scope and interactive mode, and
+  it fails loudly if you explicitly request an opt-in topic without enabling
+  the required env var, for example `INCLUDE_WEBSTACK=1 mesh topic 60`.
 - **`mesh snap`** — captures this host's state for the panel. Called
   automatically by `mesh update` and the shell-start hook; rarely run by
   hand. Output lives at `~/Sync/mesh-status/<alias>.json`.
@@ -292,6 +306,27 @@ output during initialization" warning.
 The hook is opt-in: if you'd rather drive updates manually, just delete
 `~/.zshrc.d/auto-update.zsh` (or replace the deployed copy with an empty
 file) and the dispatcher stays available for explicit `mesh update`.
+
+### zsh completion ownership
+
+This template installs the `mesh` command, but it does **not** deploy zsh
+completion files. Generic shell completion belongs to `dev-bootstrap`:
+
+- `30-shell` adds `~/.local/share/zsh/site-functions` to `fpath` before
+  `compinit`.
+- `20-terminal-ux` deploys the managed `_mesh` completion into that directory.
+- `_mesh` uses `mesh topic list` when available, so `mesh topic <TAB>` tracks
+  the official topic catalog.
+
+If `mesh <TAB>` lists files instead of subcommands, re-apply the terminal shell
+topics and open a new shell:
+
+```bash
+mesh topic 20 30
+```
+
+If zsh cached an older completion table, remove `~/.zcompdump*` once and open a
+new shell.
 
 ## Template ↔ your fork evolution
 

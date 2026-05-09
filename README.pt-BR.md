@@ -237,7 +237,21 @@ em forks privados, consolidando tudo atrás de um único `mesh <subcommand>`.
   ```
   mesh topic list
   mesh topic 20 30
+  mesh topic 20-terminal-ux 30-shell
   ```
+
+  O catálogo de tópicos não fica hardcoded neste template. `mesh topic list`
+  resolve o checkout local do `dev-bootstrap` e delega para
+  `bash bootstrap.sh --list-topics`, então a fonte oficial continua sendo o
+  repo público de bootstrap. A ordem de resolução é
+  `MESH_DEV_BOOTSTRAP_DIR`, depois `~/.config/dotfiles/auto-update.conf`,
+  depois o override local per-host (`AUTO_UPDATE_LOCAL_CONF`, default
+  `~/.config/dotfiles/auto-update.conf.local`), depois `~/dev-bootstrap`.
+
+  `mesh topic <...>` força uma reaplicação full e não interativa só desses
+  tópicos do `dev-bootstrap`. Rejeita escopo dotfiles e modo interativo, e
+  falha de forma explícita se você pedir um tópico opt-in sem habilitar a env
+  var necessária, por exemplo `INCLUDE_WEBSTACK=1 mesh topic 60`.
 - **`mesh snap`** — captura o estado deste host pro painel. Chamado
   automaticamente pelo `mesh update` e pelo hook do shell-start; raramente
   rodado à mão. Output em `~/Sync/mesh-status/<alias>.json`.
@@ -292,6 +306,27 @@ rodar **depois** do cleanup do P10K instant-prompt, evitando o warning
 O hook é opt-in: se preferir dirigir updates manualmente, basta deletar
 `~/.zshrc.d/auto-update.zsh` (ou substituir o copy deployado por arquivo
 vazio) e o dispatcher continua disponível pra `mesh update` explícito.
+
+### Dono da completion zsh
+
+Este template instala o comando `mesh`, mas **não** deploya arquivos de
+completion zsh. Completion genérica de shell pertence ao `dev-bootstrap`:
+
+- `30-shell` adiciona `~/.local/share/zsh/site-functions` ao `fpath` antes do
+  `compinit`.
+- `20-terminal-ux` deploya a completion `_mesh` gerenciada nesse diretório.
+- `_mesh` usa `mesh topic list` quando disponível, então `mesh topic <TAB>`
+  acompanha o catálogo oficial de tópicos.
+
+Se `mesh <TAB>` listar arquivos em vez de subcomandos, reaplique os tópicos de
+terminal/shell e abra um shell novo:
+
+```bash
+mesh topic 20 30
+```
+
+Se o zsh tiver cacheado uma tabela antiga de completion, remova
+`~/.zcompdump*` uma vez e abra um shell novo.
 
 ## Evolução do template ↔ seu fork
 
