@@ -184,6 +184,14 @@ _resolve_auto_update_conf() {
         printf '%s\n' "$HERE/auto-update.conf"
         return
     fi
+    if [[ -r "$HOME/dotfiles/scripts/auto-update.conf" ]]; then
+        printf '%s\n' "$HOME/dotfiles/scripts/auto-update.conf"
+        return
+    fi
+    if [[ -r "$HOME/dotfiles/scripts/auto-update.conf.example" ]]; then
+        printf '%s\n' "$HOME/dotfiles/scripts/auto-update.conf.example"
+        return
+    fi
     printf ''
 }
 

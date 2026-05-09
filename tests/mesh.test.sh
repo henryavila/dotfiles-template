@@ -378,6 +378,30 @@ test_topic_list_uses_dev_bootstrap() {
     fi
 }
 
+test_topic_list_installed_mesh_finds_home_dotfiles_conf() {
+    local iso_dir fake_home
+    iso_dir=$(mktemp -d "$TESTROOT/installed-mesh.XXXX")
+    fake_home="$TESTROOT/installed-home"
+    mkdir -p "$fake_home/dotfiles/scripts"
+    cp "$MESH" "$iso_dir/mesh"
+    chmod +x "$iso_dir/mesh"
+    cat > "$fake_home/dotfiles/scripts/auto-update.conf" <<EOF
+AUTO_UPDATE_REPOS=(
+    "$DEV_BOOTSTRAP_STUB"
+    "\$HOME/dotfiles"
+)
+EOF
+
+    local out
+    out=$(HOME="$fake_home" bash "$iso_dir/mesh" topic list 2>&1)
+    if echo "$out" | grep -q "20  20-terminal-ux" \
+       && echo "$out" | grep -q "60  60-web-stack"; then
+        _pass "installed mesh topic list finds \$HOME/dotfiles/scripts/auto-update.conf"
+    else
+        _fail "installed mesh topic list did not find home dotfiles conf" "$out"
+    fi
+}
+
 test_topic_numbers_run_bootstrap_topics() {
     local out
     out=$(_run topic 20 30)
@@ -710,6 +734,7 @@ test_update_no_only_full_interactive_runs_both_with_flags
 test_update_only_requires_value
 test_update_unknown_arg_fails
 test_topic_list_uses_dev_bootstrap
+test_topic_list_installed_mesh_finds_home_dotfiles_conf
 test_topic_numbers_run_bootstrap_topics
 test_run_hosts_automation_uses_ssh_only_for_remotes
 test_run_hosts_includes_local_without_ssh
