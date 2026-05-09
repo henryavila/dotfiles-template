@@ -217,14 +217,26 @@ em forks privados, consolidando tudo atrás de um único `mesh <subcommand>`.
     o `--non-interactive` da chamada do bootstrap pra que o menu whiptail
     apareça — útil pra validar um opt-in novo (e.g. `INCLUDE_POSTGRES`)
     sem precisar editar config.env antes.
+  - `-t, --topics TOPICS` restringe uma reaplicação full do `dev-bootstrap`
+    aos tópicos escolhidos. Aceita números (`20,30`) ou nomes completos.
 
   Exemplos:
   ```
   mesh update                     # ambos, incremental
   mesh update -f                  # ambos, full
   mesh update -o bootstrap        # só dev-bootstrap, incremental
+  mesh update --topics 20,30      # só tópicos 20 + 30 do dev-bootstrap
   mesh update -o bootstrap -f -i  # só dev-bootstrap, full, com menu
   mesh update -o dotfiles         # só dotfiles, incremental
+  ```
+- **`mesh topic list` / `mesh topic <NN...>`** — lista os tópicos oficiais
+  do `dev-bootstrap` ou reaplica tópicos selecionados por número. É o atalho
+  para `mesh update --topics ...`.
+
+  Exemplos:
+  ```
+  mesh topic list
+  mesh topic 20 30
   ```
 - **`mesh snap`** — captura o estado deste host pro painel. Chamado
   automaticamente pelo `mesh update` e pelo hook do shell-start; raramente

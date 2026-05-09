@@ -61,6 +61,7 @@ EOF
     cat > "$dir/auto-update.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "MOTOR-ENV: DEV_BOOTSTRAP_TMUX_AUTO_MAIN=${DEV_BOOTSTRAP_TMUX_AUTO_MAIN-unset}"
+echo "MOTOR-TOPICS: ONLY_TOPICS=${ONLY_TOPICS-unset} REQUIRE=${DEV_BOOTSTRAP_REQUIRE_ONLY_TOPICS-unset}"
 echo "MOTOR: $*"
 EOF
     chmod +x "$dir/lib/mesh-status" "$dir/lib/mesh-snap" "$dir/auto-update.sh"
@@ -68,6 +69,24 @@ EOF
 
 _run() {
     MESH_HOME="$STUB" bash "$MESH" "$@" 2>&1
+}
+
+_make_dev_bootstrap_stub() {
+    local dir="$1"
+    rm -rf "$dir"
+    mkdir -p "$dir/topics/20-terminal-ux" "$dir/topics/30-shell" "$dir/topics/60-web-stack"
+    cat > "$dir/bootstrap.sh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--list-topics" ]]; then
+    printf '%s\n' \
+        '20  20-terminal-ux' \
+        '30  30-shell' \
+        '60  60-web-stack  opt-in: INCLUDE_WEBSTACK=1'
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$dir/bootstrap.sh"
 }
 
 _make_run_conf() {
@@ -169,6 +188,8 @@ _reset_run_state() {
 
 STUB="$TESTROOT/stub"
 _make_stub_mesh_home "$STUB"
+DEV_BOOTSTRAP_STUB="$TESTROOT/dev-bootstrap"
+_make_dev_bootstrap_stub "$DEV_BOOTSTRAP_STUB"
 RUN_CONF="$TESTROOT/mesh-status.conf"
 SSH_STUB="$TESTROOT/ssh-stub"
 SSH_LOG="$TESTROOT/ssh.log"
@@ -303,6 +324,37 @@ test_update_no_only_runs_both() {
     fi
 }
 
+test_update_topics_implies_bootstrap_full() {
+    local out; out=$(_run update --topics 20,30)
+    if echo "$out" | grep -q "MOTOR: --only dev-bootstrap --full" \
+       && echo "$out" | grep -q "MOTOR-TOPICS: ONLY_TOPICS=20 30 REQUIRE=1" \
+       && ! echo "$out" | grep -q "MOTOR: --only dotfiles"; then
+        _pass "mesh update --topics runs dev-bootstrap --full with ONLY_TOPICS"
+    else
+        _fail "update --topics dispatch wrong" "$out"
+    fi
+}
+
+test_update_topics_rejects_dotfiles_scope() {
+    local out rc
+    out=$(_run update -o dotfiles --topics 20 2>&1); rc=$?
+    if (( rc != 0 )) && echo "$out" | grep -q "applies only to dev-bootstrap"; then
+        _pass "mesh update --topics rejects dotfiles scope"
+    else
+        _fail "update --topics accepted dotfiles scope (rc=$rc)" "$out"
+    fi
+}
+
+test_update_topics_rejects_interactive() {
+    local out rc
+    out=$(_run update --topics 20 -i 2>&1); rc=$?
+    if (( rc != 0 )) && echo "$out" | grep -q "cannot be combined"; then
+        _pass "mesh update --topics rejects interactive mode"
+    else
+        _fail "update --topics accepted interactive mode (rc=$rc)" "$out"
+    fi
+}
+
 test_update_help_runs_motor_help_once() {
     local out; out=$(_run update --help)
     local lines; lines=$(echo "$out" | grep -c "MOTOR:")
@@ -310,6 +362,30 @@ test_update_help_runs_motor_help_once() {
         _pass "mesh update --help delegates to motor help once"
     else
         _fail "update --help should not run both repos" "$out"
+    fi
+}
+
+# ─── Topic subcommand ──────────────────────────────────────────────
+
+test_topic_list_uses_dev_bootstrap() {
+    local out
+    out=$(MESH_DEV_BOOTSTRAP_DIR="$DEV_BOOTSTRAP_STUB" _run topic list)
+    if echo "$out" | grep -q "20  20-terminal-ux" \
+       && echo "$out" | grep -q "60  60-web-stack"; then
+        _pass "mesh topic list delegates to dev-bootstrap topic list"
+    else
+        _fail "topic list output wrong" "$out"
+    fi
+}
+
+test_topic_numbers_run_bootstrap_topics() {
+    local out
+    out=$(_run topic 20 30)
+    if echo "$out" | grep -q "MOTOR: --only dev-bootstrap --full" \
+       && echo "$out" | grep -q "MOTOR-TOPICS: ONLY_TOPICS=20 30 REQUIRE=1"; then
+        _pass "mesh topic 20 30 maps to dev-bootstrap topic-only update"
+    else
+        _fail "mesh topic numbers dispatch wrong" "$out"
     fi
 }
 
@@ -621,6 +697,9 @@ test_status_positional_with_flag
 test_top_level_flag_falls_to_status
 test_snap_passthrough
 test_update_no_only_runs_both
+test_update_topics_implies_bootstrap_full
+test_update_topics_rejects_dotfiles_scope
+test_update_topics_rejects_interactive
 test_update_help_runs_motor_help_once
 test_update_only_long_form
 test_update_only_short_form
@@ -630,6 +709,8 @@ test_update_full_and_interactive_forwarded
 test_update_no_only_full_interactive_runs_both_with_flags
 test_update_only_requires_value
 test_update_unknown_arg_fails
+test_topic_list_uses_dev_bootstrap
+test_topic_numbers_run_bootstrap_topics
 test_run_hosts_automation_uses_ssh_only_for_remotes
 test_run_hosts_includes_local_without_ssh
 test_run_default_selector_uses_online_hosts

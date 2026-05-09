@@ -7,6 +7,7 @@
 #   mesh status [<alias>] [flags]            →  scripts/lib/mesh-status (positional → --detail)
 #   mesh snap   [flags]                      →  scripts/lib/mesh-snap   (passthrough)
 #   mesh update [-o NAME] [-f] [-i] [flags]  →  scripts/auto-update.sh  (--only / --full / --interactive)
+#   mesh topic list|<numbers...>             →  dev-bootstrap topic list / topic-only apply
 #   mesh run [flags] <subcommand> [args]     →  selected hosts, sequential over SSH
 #
 # Bare `mesh` (no subcommand) renders the cross-mesh dashboard (= `mesh status`).
@@ -64,6 +65,8 @@ Usage:
   mesh status [<alias>] [flags]     Cross-mesh dashboard; positional drill-down
   mesh snap [flags]                 Generate this host's snapshot
   mesh update [-o NAME] [-f] [-i]   Pull and apply updates
+  mesh topic list                   List dev-bootstrap topics
+  mesh topic <NN...>                Re-apply dev-bootstrap topics by number
   mesh run [flags] <subcommand>     Run mesh subcommands on selected hosts
   mesh -h | --help                  This help
   mesh -V | --version               Version
@@ -86,6 +89,11 @@ Subcommands:
                                      Silently ignored for dotfiles or incremental runs.
 
            Passthrough flags: --reset-auth, --from-shell-start.
+  topic    Convenience wrapper for dev-bootstrap topics. `mesh topic list`
+           prints the topic numbers from the local dev-bootstrap checkout.
+           `mesh topic 20 30` runs only those topics, equivalent to
+           `mesh update -o bootstrap --topics 20,30`.
+
   run      Fan out a mesh subcommand to selected hosts. Default mode opens
            a multi-select with all online hosts preselected when fzf/whiptail
            is available. Remote hosts run sequentially through `ssh -tt`, so
@@ -112,6 +120,8 @@ Examples:
   mesh update -o bootstrap -f       Only dev-bootstrap, full (non-interactive)
   mesh update -o bootstrap -f -i    Only dev-bootstrap, full, with interactive menu
   mesh update -o dotfiles           Only dotfiles, incremental
+  mesh topic list                   Show official dev-bootstrap topic numbers
+  mesh topic 20 30                  Re-apply terminal UX + shell topics
   mesh run update -f                Select hosts, then run mesh update -f
   mesh run --hosts mac,crc update -f
   mesh run --online snap --quiet
@@ -153,6 +163,98 @@ sub_snap() {
     exec "$lib" "$@"
 }
 
+_normalize_topic_spec() {
+    local raw="$*"
+    raw="${raw//,/ }"
+    # shellcheck disable=SC2086
+    set -- $raw
+    printf '%s' "$*"
+}
+
+_resolve_auto_update_conf() {
+    if [[ -n "${AUTO_UPDATE_CONF:-}" ]]; then
+        printf '%s\n' "$AUTO_UPDATE_CONF"
+        return
+    fi
+    if [[ -r "$HOME/.config/dotfiles/auto-update.conf" ]]; then
+        printf '%s\n' "$HOME/.config/dotfiles/auto-update.conf"
+        return
+    fi
+    if [[ -r "$HERE/auto-update.conf" ]]; then
+        printf '%s\n' "$HERE/auto-update.conf"
+        return
+    fi
+    printf ''
+}
+
+_resolve_dev_bootstrap_repo() {
+    if [[ -n "${MESH_DEV_BOOTSTRAP_DIR:-}" && -d "$MESH_DEV_BOOTSTRAP_DIR/topics" ]]; then
+        printf '%s\n' "$MESH_DEV_BOOTSTRAP_DIR"
+        return 0
+    fi
+
+    local conf local_conf repo
+    conf="$(_resolve_auto_update_conf)"
+    if [[ -n "$conf" && -r "$conf" ]]; then
+        AUTO_UPDATE_REPOS=()
+        # shellcheck source=/dev/null
+        . "$conf" 2>/dev/null || true
+        local_conf="${AUTO_UPDATE_LOCAL_CONF:-$HOME/.config/dotfiles/auto-update.conf.local}"
+        if [[ -r "$local_conf" ]]; then
+            # shellcheck source=/dev/null
+            . "$local_conf" 2>/dev/null || true
+        fi
+        for repo in "${AUTO_UPDATE_REPOS[@]+"${AUTO_UPDATE_REPOS[@]}"}"; do
+            if [[ "$(basename "$repo")" == "dev-bootstrap" && -d "$repo/topics" ]]; then
+                printf '%s\n' "$repo"
+                return 0
+            fi
+        done
+    fi
+
+    if [[ -d "$HOME/dev-bootstrap/topics" ]]; then
+        printf '%s\n' "$HOME/dev-bootstrap"
+        return 0
+    fi
+
+    return 1
+}
+
+_print_topic_help() {
+    cat <<'EOF'
+Usage:
+  mesh topic list
+  mesh topic <NN|NN-name> [...]
+
+Examples:
+  mesh topic list
+  mesh topic 20 30
+  mesh topic 20-terminal-ux 30-shell
+EOF
+}
+
+sub_topic() {
+    case "${1:-}" in
+        -h|--help|"")
+            _print_topic_help
+            return 0
+            ;;
+        list)
+            shift
+            (( $# == 0 )) || _die "topic list: unexpected arg '$1'"
+            local repo
+            repo="$(_resolve_dev_bootstrap_repo)" || \
+                _die "dev-bootstrap repo not found (set MESH_DEV_BOOTSTRAP_DIR or AUTO_UPDATE_REPOS)"
+            exec bash "$repo/bootstrap.sh" --list-topics
+            ;;
+    esac
+
+    local topics
+    topics="$(_normalize_topic_spec "$@")"
+    [[ -n "$topics" ]] || _die "topic: missing topic number"
+    sub_update --topics "$topics"
+}
+
 sub_update() {
     # Updates must never re-enable dev-bootstrap's dormant tmux auto-main
     # experiment in child shells while propagating across the mesh.
@@ -171,6 +273,9 @@ sub_update() {
     # and (when empty) for the both-repos fallback below. `bootstrap` is
     # accepted as a brevity alias for `dev-bootstrap` (the canonical repo name).
     local only=""
+    local topics_spec=""
+    local full=0
+    local interactive=0
     local pass_args=()
     while (( $# > 0 )); do
         case "$1" in
@@ -184,14 +289,44 @@ sub_update() {
                 only="$val"
                 shift
                 ;;
-            -f|--full)         pass_args+=("--full");        shift ;;
-            -i|--interactive)  pass_args+=("--interactive"); shift ;;
+            -t|--topics)
+                shift
+                local val="${1:-}"
+                if [[ -z "$val" || "$val" == -* ]]; then
+                    _die "update: -t/--topics requires a topic number or name"
+                fi
+                topics_spec="$topics_spec $val"
+                shift
+                ;;
+            --topics=*)
+                local val="${1#*=}"
+                [[ -n "$val" ]] || _die "update: --topics requires a topic number or name"
+                topics_spec="$topics_spec $val"
+                shift
+                ;;
+            -f|--full)         full=1; pass_args+=("--full");        shift ;;
+            -i|--interactive)  interactive=1; pass_args+=("--interactive"); shift ;;
             --*|-*)            pass_args+=("$1");            shift ;;
             *)
-                _die "update: unknown arg '$1' (expected -o NAME | -f | -i | passthrough flag)"
+                _die "update: unknown arg '$1' (expected -o NAME | -f | -i | -t TOPICS | passthrough flag)"
                 ;;
         esac
     done
+
+    if [[ -n "$topics_spec" ]]; then
+        (( interactive == 0 )) || _die "update: --topics cannot be combined with -i/--interactive"
+        if [[ -n "$only" && "$only" != "dev-bootstrap" ]]; then
+            _die "update: --topics applies only to dev-bootstrap"
+        fi
+        only="dev-bootstrap"
+        topics_spec="$(_normalize_topic_spec "$topics_spec")"
+        [[ -n "$topics_spec" ]] || _die "update: --topics requires a topic number or name"
+        if (( full == 0 )); then
+            pass_args+=("--full")
+        fi
+        export ONLY_TOPICS="$topics_spec"
+        export DEV_BOOTSTRAP_REQUIRE_ONLY_TOPICS=1
+    fi
 
     if [[ -n "$only" ]]; then
         exec bash "$motor" --only "$only" "${pass_args[@]+"${pass_args[@]}"}"
@@ -900,6 +1035,10 @@ case "${1:-status}" in
     update)
         shift
         sub_update "$@"
+        ;;
+    topic)
+        shift
+        sub_topic "$@"
         ;;
     run)
         shift

@@ -218,14 +218,26 @@ in private dotfiles forks, consolidating them behind a single
     drops `--non-interactive` from the bootstrap call so the whiptail menu
     shows — useful to validate a new opt-in (e.g. `INCLUDE_POSTGRES`)
     without committing config tweaks first.
+  - `-t, --topics TOPICS` restricts a full dev-bootstrap apply to selected
+    topics. Accepts numbers (`20,30`) or full names.
 
   Examples:
   ```
   mesh update                     # both repos, incremental
   mesh update -f                  # both repos, full
   mesh update -o bootstrap        # only dev-bootstrap, incremental
+  mesh update --topics 20,30      # only dev-bootstrap topics 20 + 30
   mesh update -o bootstrap -f -i  # only dev-bootstrap, full, with menu
   mesh update -o dotfiles         # only dotfiles, incremental
+  ```
+- **`mesh topic list` / `mesh topic <NN...>`** — lists official
+  `dev-bootstrap` topics or re-applies selected topics by number. This is a
+  short form for `mesh update --topics ...`.
+
+  Examples:
+  ```
+  mesh topic list
+  mesh topic 20 30
   ```
 - **`mesh snap`** — captures this host's state for the panel. Called
   automatically by `mesh update` and the shell-start hook; rarely run by
