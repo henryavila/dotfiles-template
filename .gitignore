@@ -22,3 +22,8 @@ Thumbs.db
 
 # Backups from install.sh
 *.bak-*
+
+# code-server local secrets/state — keep only public scaffold in git.
+code-server/config.yaml
+code-server/*secret*
+code-server/*token*

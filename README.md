@@ -108,12 +108,25 @@ bash install.sh             # apply
 >
 > `scripts/doctor.sh` reports drift between repo sources and deployed files. See [Drift detection — `doctor.sh`](#drift-detection--doctorsh) below.
 
+### code-server scaffold
+
+The editor service itself belongs to `dev-bootstrap/85-code-server`; this
+template only provides safe preference scaffolding under `code-server/`.
+Copy `settings.json.example` and `extensions.txt.example` to plain files in
+your private fork if you want to manage browser VS Code preferences.
+
+Never commit the real `code-server/config.yaml`: it contains the local
+password. GitHub auth should come from the bootstrap wrapper via
+`gh auth token`, not from a token checked into dotfiles.
+
 ### What this template does NOT manage (comes from `dev-bootstrap`)
 
 - `~/.inputrc` — bootstrap/30-shell (word-kill, completion niceties)
 - `~/.bashrc`, `~/.zshrc` — bootstrap/30-shell loaders
 - Global `~/.gitconfig` — bootstrap/50-git via `git config --global`
 - `~/.config/starship.toml`, `~/.tmux.conf` — bootstrap/20-terminal-ux, 40-tmux
+- `code-server` installation, LaunchAgent, local password, and optional
+  Tailscale Serve — bootstrap/85-code-server
 - **Universal shell aliases** (navigation, shortcuts, utility funcs, git, tmux, Laravel, Tailscale, Phase E modern CLI replacements) — each lives in its topic's `~/.bashrc.d/NN-<topic>.sh` + zsh equivalent. Full inventory in [`dev-bootstrap/docs/ALIASES.md`](https://github.com/henryavila/dev-bootstrap/blob/main/docs/ALIASES.md).
 
 If you catch yourself re-declaring any of these, stop. The bootstrap already covers them; your fork should only hold **identity + overrides + personal-only** (project names, paths, tool flags you prefer).
